@@ -404,6 +404,7 @@ try {
     assert.equal(await panel.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await panel.screenshot({ path: path.join(artifacts, 'concurrent-light.png'), fullPage: true });
     await panel.emulateMedia({ colorScheme: 'dark' });
+    await panel.waitForTimeout(300); // let colour transitions settle
     await panel.screenshot({ path: path.join(artifacts, 'concurrent-dark.png'), fullPage: true });
     await panel.emulateMedia({ colorScheme: 'light' });
     const opened = context.waitForEvent('page');
@@ -414,12 +415,25 @@ try {
     assert.equal(await workspace.locator('#workspace-open').isVisible(), false);
     assert.equal(await workspace.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     assert.equal(await workspace.locator('main').evaluate(main => main.scrollHeight > main.clientHeight), false, '展开页不能沿用弹窗的内部滚动限制');
+    const tasks = workspace.locator('#task-list tbody tr[data-task-id]');
+    const filter = name => workspace.locator('.task-filter').filter({ hasText: name });
+    assert.equal(await tasks.count(), 5);
+    assert.equal(await workspace.locator('#task-overview').isVisible(), false, '展开页用任务列表代替摘要条');
+    await filter('排队中').click();
+    assert.deepEqual(await tasks.evaluateAll(rows => rows.map(row => row.dataset.taskId).sort()), ids.slice(3).sort());
+    await filter('下载中').click();
+    assert.equal(await tasks.count(), 3);
+    await filter('全部').click();
     await workspace.screenshot({ path: path.join(artifacts, 'workspace-light.png'), fullPage: true });
     await workspace.emulateMedia({ colorScheme: 'dark' });
+    await workspace.waitForTimeout(300); // let colour transitions settle
     await workspace.screenshot({ path: path.join(artifacts, 'workspace-dark.png'), fullPage: true });
-    await workspace.close();
-    await jobStatus(ids[4]).locator('.cancel').click();
+    await workspace.emulateMedia({ colorScheme: 'light' });
+    // Cancel a queued task from the list; the popup card must follow.
+    await workspace.locator(`#task-list tr[data-task-id="${ids[4]}"]`).getByRole('button', { name: '取消' }).click();
     await waitJob('cancelled', undefined, ids[4]);
+    await workspace.locator(`#task-list tr[data-task-id="${ids[4]}"][data-state="cancelled"]`).waitFor();
+    await workspace.close();
     await jobStatus(ids[0]).locator('.cancel').click();
     await waitJob('cancelled', undefined, ids[0]);
     await waitGate(names[3]);
@@ -742,6 +756,25 @@ try {
     assert.equal(await worker.evaluate(async () => (await chrome.downloads.search({})).length), before);
     await row('expired.m3u8').scrollIntoViewIfNeeded();
     await panel.screenshot({ path: path.join(artifacts, 'failed-403.png') });
+  });
+  await check('展开面板按状态筛选任务，失败行写明原因和建议，完成行可打开', async () => {
+    const workspace = await context.newPage();
+    try {
+      await workspace.setViewportSize({ width: 1160, height: 900 });
+      await workspace.goto(`chrome-extension://${id}/popup.html?tab=${tabId}&view=workspace`);
+      const filter = name => workspace.locator('.task-filter').filter({ hasText: name });
+      await filter('失败').click();
+      const failed = workspace.locator('#task-list tbody tr[data-task-id]').filter({ hasText: 'expired.m3u8' });
+      await failed.getByRole('button', { name: '重试' }).waitFor();
+      assert.match(await workspace.locator('#task-list .task-error').filter({ hasText: 'HTTP 403' }).innerText(), /回到网页重新播放/);
+      assert.equal(await workspace.locator('#task-list tbody tr[data-state="complete"]').count(), 0);
+      assert.equal(await workspace.locator('#task-list tbody tr[data-task-id]').filter({ hasText: 'concurrent-bad' }).count(), 0, '重试成功后不再列出旧的失败任务');
+      await workspace.screenshot({ path: path.join(artifacts, 'workspace-failed.png'), fullPage: true });
+      await filter('已完成').click();
+      assert.ok(await workspace.locator('#task-list tbody tr[data-task-id]').count() > 0);
+      assert.equal(await workspace.locator('#task-list tbody tr[data-task-id]:not([data-state="complete"])').count(), 0);
+      await workspace.locator('#task-list tbody tr').first().getByRole('button', { name: '打开' }).waitFor();
+    } finally { await workspace.close(); }
   });
   await check('播放后识别 MP4，下载内容与源文件完全一致并可解码', async () => {
     await clickDownload(row('sample.mp4'));

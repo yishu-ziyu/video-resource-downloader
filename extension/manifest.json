@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "视频资源下载器",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "minimum_chrome_version": "116",
   "description": "识别当前网页的视频资源，下载直接视频文件及非加密 HLS 点播。",
   "permissions": [

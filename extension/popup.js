@@ -387,10 +387,73 @@ async function renderView() {
   const queued = jobs.filter(job => job.state === 'queued').length;
   $('#task-overview').hidden = !active && !queued;
   $('#task-overview .overview-text').textContent = [active && `${active} 个下载中`, queued && `${queued} 个排队`].filter(Boolean).join(' · ');
+  if (workspace) renderTasks(jobs, nativeDownloads, page.url);
   clearTimeout(progressTimer);
   if (jobs.some(job => job.kind === 'file' && job.state === 'saving')) {
     progressTimer = setTimeout(() => void render().catch(showError), 400);
   }
+}
+
+// The full panel manages every task of this tab, including ones whose card is gone after navigation.
+const TASK_FILTERS = [['all', '全部'], ['running', '下载中'], ['queued', '排队中'], ['failed', '失败'], ['complete', '已完成']];
+const taskGroup = job => job.state === 'queued' ? 'queued' : busy(job) ? 'running' : job.state;
+let taskFilter = 'all';
+function renderTasks(allJobs, nativeDownloads, pageUrl) {
+  // A failed or cancelled attempt that was retried later is history, not something left to handle.
+  const resource = job => `${job.pageUrl}\n${job.resourceUrl || job.url}`;
+  const jobs = allJobs.filter((job, index) => !['failed', 'cancelled'].includes(job.state) ||
+    !allJobs.slice(index + 1).some(later => resource(later) === resource(job)));
+  $('#task-list').hidden = !jobs.length;
+  $('.task-filters').replaceChildren(...TASK_FILTERS.map(([key, label]) => {
+    const count = key === 'all' ? jobs.length : jobs.filter(job => taskGroup(job) === key).length;
+    const button = element('button', 'task-filter', label);
+    button.append(element('span', '', String(count)));
+    button.setAttribute('aria-pressed', String(taskFilter === key));
+    button.addEventListener('click', () => { taskFilter = key; renderTasks(allJobs, nativeDownloads, pageUrl); });
+    return button;
+  }));
+  const shown = jobs.filter(job => taskFilter === 'all' || taskGroup(job) === taskFilter).reverse();
+  $('.task-list-empty').hidden = shown.length > 0;
+  const titles = { queued: '排队中', inspecting: '准备中', fetching: '下载中', muxing: '封装中', saving: '保存中', complete: '已完成', failed: '失败', cancelled: '已取消' };
+  $('#task-list tbody').replaceChildren(...shown.flatMap(job => {
+    const native = nativeDownloads.get(job.id);
+    const { percent } = downloadProgress(job, native);
+    const row = element('tr'); row.dataset.taskId = job.id; row.dataset.state = job.state;
+    const name = element('td'); const nameBox = element('div', 'task-name'); name.append(nameBox);
+    nameBox.append(element('span', 'task-format', job.kind === 'hls' ? 'HLS' : 'MP4'));
+    const label = element('div', 'task-label', job.savedName || job.name);
+    if (job.pageUrl && job.pageUrl !== pageUrl) label.append(element('small', '', '上一页面'));
+    else if (job.note) label.append(element('small', '', job.note));
+    nameBox.append(label);
+    const state = element('td'); state.append(element('span', `task-state ${taskGroup(job)}`, titles[job.state] || job.state));
+    const progress = element('td', 'task-progress');
+    if (busy(job) && percent !== undefined) {
+      const bar = element('progress'); bar.max = 100; bar.value = percent; bar.setAttribute('aria-label', '下载进度');
+      progress.append(bar, element('span', '', `${percent}%`));
+    } else progress.textContent = job.state === 'complete' ? '100%' : '—';
+    const size = element('td', 'task-size', bytes(native?.bytesReceived ?? job.bytes) || '—');
+    const actions = element('td', 'task-actions');
+    if (busy(job)) {
+      const cancel = element('button', 'secondary', '取消');
+      cancel.addEventListener('click', () => command({ type: 'cancel', id: job.id })); actions.append(cancel);
+    } else if (job.state === 'complete' && job.downloadId !== undefined) {
+      const open = element('button', 'open-file', '打开');
+      open.addEventListener('click', () => openDownload('open', job.downloadId));
+      const show = element('button', 'secondary', '在文件夹中显示');
+      show.addEventListener('click', () => openDownload('show', job.downloadId));
+      actions.append(open, show);
+    } else if (job.state === 'failed' || job.state === 'cancelled') {
+      const retry = element('button', job.state === 'failed' ? 'retry' : 'secondary', job.state === 'failed' ? '重试' : '重新下载');
+      retry.addEventListener('click', () => command({ type: 'start', tabId, url: job.resourceUrl || job.url,
+        selectedUrl: job.resourceUrl && job.url !== job.resourceUrl ? job.url : undefined }));
+      actions.append(retry);
+    }
+    row.append(name, state, progress, size, actions);
+    if (job.state !== 'failed') return [row];
+    const detail = element('tr', 'task-error'); const cell = element('td', '', `${job.message} → ${nextStep(job.message)}`);
+    cell.colSpan = 5; detail.append(cell);
+    return [row, detail];
+  }));
 }
 
 // Tell "videos exist but have no address yet" apart from "no video on this page".
