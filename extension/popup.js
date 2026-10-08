@@ -395,65 +395,92 @@ async function renderView() {
 }
 
 // The full panel manages every task of this tab, including ones whose card is gone after navigation.
-const TASK_FILTERS = [['all', '全部'], ['running', '下载中'], ['queued', '排队中'], ['failed', '失败'], ['complete', '已完成']];
+const TASK_FILTERS = [['all', '全部'], ['running', '下载中'], ['queued', '排队中'], ['failed', '失败'], ['complete', '已完成'], ['cancelled', '已取消']];
+const TASK_TITLES = { queued: '排队中', inspecting: '准备中', fetching: '下载中', muxing: '封装中', saving: '保存中', complete: '已完成', failed: '失败', cancelled: '已取消' };
 const taskGroup = job => job.state === 'queued' ? 'queued' : busy(job) ? 'running' : job.state;
+const taskRows = new Map();
 let taskFilter = 'all';
+let lastTasks;
+// Rows and buttons are updated in place: progress writes arrive several times a second,
+// and rebuilding would swallow a click or drop keyboard focus mid-download.
 function renderTasks(allJobs, nativeDownloads, pageUrl) {
+  lastTasks = [allJobs, nativeDownloads, pageUrl];
   // A failed or cancelled attempt that was retried later is history, not something left to handle.
   const resource = job => `${job.pageUrl}\n${job.resourceUrl || job.url}`;
   const jobs = allJobs.filter((job, index) => !['failed', 'cancelled'].includes(job.state) ||
     !allJobs.slice(index + 1).some(later => resource(later) === resource(job)));
   $('#task-list').hidden = !jobs.length;
-  $('.task-filters').replaceChildren(...TASK_FILTERS.map(([key, label]) => {
-    const count = key === 'all' ? jobs.length : jobs.filter(job => taskGroup(job) === key).length;
-    const button = element('button', 'task-filter', label);
-    button.append(element('span', '', String(count)));
-    button.setAttribute('aria-pressed', String(taskFilter === key));
-    button.addEventListener('click', () => { taskFilter = key; renderTasks(allJobs, nativeDownloads, pageUrl); });
+  if (!$('.task-filters').children.length) $('.task-filters').append(...TASK_FILTERS.map(([key, label]) => {
+    const button = element('button', 'task-filter', label); button.dataset.filter = key;
+    button.append(element('span'));
+    button.addEventListener('click', () => { taskFilter = key; renderTasks(...lastTasks); });
     return button;
   }));
+  for (const button of $('.task-filters').children) {
+    const key = button.dataset.filter;
+    button.lastChild.textContent = String(key === 'all' ? jobs.length : jobs.filter(job => taskGroup(job) === key).length);
+    button.setAttribute('aria-pressed', String(taskFilter === key));
+  }
   const shown = jobs.filter(job => taskFilter === 'all' || taskGroup(job) === taskFilter).reverse();
   $('.task-list-empty').hidden = shown.length > 0;
-  const titles = { queued: '排队中', inspecting: '准备中', fetching: '下载中', muxing: '封装中', saving: '保存中', complete: '已完成', failed: '失败', cancelled: '已取消' };
-  $('#task-list tbody').replaceChildren(...shown.flatMap(job => {
-    const native = nativeDownloads.get(job.id);
-    const { percent } = downloadProgress(job, native);
-    const row = element('tr'); row.dataset.taskId = job.id; row.dataset.state = job.state;
-    const name = element('td'); const nameBox = element('div', 'task-name'); name.append(nameBox);
-    nameBox.append(element('span', 'task-format', job.kind === 'hls' ? 'HLS' : 'MP4'));
-    const label = element('div', 'task-label', job.savedName || job.name);
-    if (job.pageUrl && job.pageUrl !== pageUrl) label.append(element('small', '', '上一页面'));
-    else if (job.note) label.append(element('small', '', job.note));
-    nameBox.append(label);
-    const state = element('td'); state.append(element('span', `task-state ${taskGroup(job)}`, titles[job.state] || job.state));
-    const progress = element('td', 'task-progress');
-    if (busy(job) && percent !== undefined) {
-      const bar = element('progress'); bar.max = 100; bar.value = percent; bar.setAttribute('aria-label', '下载进度');
-      progress.append(bar, element('span', '', `${percent}%`));
-    } else progress.textContent = job.state === 'complete' ? '100%' : '—';
-    const size = element('td', 'task-size', bytes(native?.bytesReceived ?? job.bytes) || '—');
-    const actions = element('td', 'task-actions');
-    if (busy(job)) {
-      const cancel = element('button', 'secondary', '取消');
-      cancel.addEventListener('click', () => command({ type: 'cancel', id: job.id })); actions.append(cancel);
-    } else if (job.state === 'complete' && job.downloadId !== undefined) {
-      const open = element('button', 'open-file', '打开');
-      open.addEventListener('click', () => openDownload('open', job.downloadId));
-      const show = element('button', 'secondary', '在文件夹中显示');
-      show.addEventListener('click', () => openDownload('show', job.downloadId));
-      actions.append(open, show);
-    } else if (job.state === 'failed' || job.state === 'cancelled') {
-      const retry = element('button', job.state === 'failed' ? 'retry' : 'secondary', job.state === 'failed' ? '重试' : '重新下载');
-      retry.addEventListener('click', () => command({ type: 'start', tabId, url: job.resourceUrl || job.url,
-        selectedUrl: job.resourceUrl && job.url !== job.resourceUrl ? job.url : undefined }));
-      actions.append(retry);
-    }
-    row.append(name, state, progress, size, actions);
-    if (job.state !== 'failed') return [row];
-    const detail = element('tr', 'task-error'); const cell = element('td', '', `${job.message} → ${nextStep(job.message)}`);
-    cell.colSpan = 5; detail.append(cell);
-    return [row, detail];
-  }));
+  const live = new Set(allJobs.map(job => job.id));
+  for (const id of taskRows.keys()) if (!live.has(id)) taskRows.delete(id);
+  const nodes = shown.flatMap(job => {
+    const entry = taskRows.get(job.id) || createTaskRow(job);
+    taskRows.set(job.id, entry);
+    updateTaskRow(entry, job, nativeDownloads.get(job.id), pageUrl);
+    return job.state === 'failed' ? [entry.row, entry.detail] : [entry.row];
+  });
+  const body = $('#task-list tbody');
+  if (nodes.length !== body.children.length || nodes.some((node, index) => body.children[index] !== node)) body.replaceChildren(...nodes);
+}
+function createTaskRow(job) {
+  const row = element('tr'); row.dataset.taskId = job.id;
+  const cells = ['name', 'state', 'progress', 'size', 'actions'].map(name => element('td', `task-${name}-cell`));
+  const nameBox = element('div', 'task-name');
+  const ext = (job.savedName || job.filename || '').match(/\.([a-z0-9]+)$/i)?.[1];
+  nameBox.append(element('span', 'task-format', job.kind === 'hls' ? 'HLS' : ext?.toUpperCase() || '文件'), element('div', 'task-label'));
+  cells[0].append(nameBox); cells[1].append(element('span', 'task-state'));
+  cells[2].className = 'task-progress'; cells[3].className = 'task-size'; cells[4].className = 'task-actions';
+  row.append(...cells);
+  const detail = element('tr', 'task-error'); const cell = element('td'); cell.colSpan = 5; detail.append(cell);
+  return { row, cells, detail, actionsKey: '' };
+}
+function updateTaskRow(entry, job, native, pageUrl) {
+  const { row, cells, detail } = entry;
+  const name = job.savedName || job.name;
+  const oldPage = job.pageUrl && job.pageUrl !== pageUrl;
+  row.dataset.state = job.state;
+  const label = cells[0].querySelector('.task-label');
+  label.textContent = name;
+  const sub = oldPage ? '上一页面' : job.note;
+  if (sub) label.append(element('small', '', sub));
+  const state = cells[1].firstChild; state.className = `task-state ${taskGroup(job)}`; state.textContent = TASK_TITLES[job.state] || job.state;
+  const { percent } = downloadProgress(job, native);
+  if (busy(job) && percent !== undefined) {
+    let bar = cells[2].querySelector('progress');
+    if (!bar) { bar = element('progress'); bar.max = 100; bar.setAttribute('aria-label', '下载进度'); cells[2].replaceChildren(bar, element('span')); }
+    bar.value = percent; cells[2].lastChild.textContent = `${percent}%`;
+  } else cells[2].textContent = job.state === 'complete' ? '100%' : '—';
+  cells[3].textContent = bytes(native?.bytesReceived ?? job.bytes) || '—';
+  // A task from another page cannot be restarted here: its resource is gone from this tab.
+  const kind = busy(job) ? 'cancel' : job.state === 'complete' && job.downloadId !== undefined ? 'file' :
+    ['failed', 'cancelled'].includes(job.state) && !oldPage ? job.state : 'none';
+  const actionsKey = `${kind}|${job.downloadId}|${name}`;
+  if (entry.actionsKey !== actionsKey) {
+    entry.actionsKey = actionsKey;
+    const button = (className, text, action) => {
+      const node = element('button', className, text); node.setAttribute('aria-label', `${text} ${name}`);
+      node.addEventListener('click', action); return node;
+    };
+    const retry = () => command({ type: 'start', tabId, url: job.resourceUrl || job.url,
+      selectedUrl: job.resourceUrl && job.url !== job.resourceUrl ? job.url : undefined });
+    cells[4].replaceChildren(...(kind === 'cancel' ? [button('secondary', '取消', () => command({ type: 'cancel', id: job.id }))] :
+      kind === 'file' ? [button('open-file', '打开', () => openDownload('open', job.downloadId)),
+        button('secondary', '在文件夹中显示', () => openDownload('show', job.downloadId))] :
+      kind === 'failed' ? [button('retry', '重试', retry)] : kind === 'cancelled' ? [button('secondary', '重新下载', retry)] : []));
+  }
+  detail.firstChild.textContent = job.state === 'failed' ? `${job.message} → ${nextStep(job.message)}` : '';
 }
 
 // Tell "videos exist but have no address yet" apart from "no video on this page".

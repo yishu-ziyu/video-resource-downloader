@@ -332,6 +332,8 @@ try {
   }
   // A finished task folds the version row behind "更多操作", as a user would see it.
   async function revealActions(card) {
+    // Wait until the card has settled on one of the two rows before deciding.
+    await card.locator('.card-actions:visible, .more-actions:visible').first().waitFor();
     if (!(await card.locator('.card-actions').isVisible())) await card.getByRole('button', { name: '更多操作' }).click();
   }
   async function clickDownload(card) {
@@ -434,6 +436,9 @@ try {
     await waitJob('cancelled', undefined, ids[4]);
     await workspace.locator(`#task-list tr[data-task-id="${ids[4]}"][data-state="cancelled"]`).waitFor();
     await workspace.close();
+    const cancelledCard = row(`${names[4]}.m3u8`);
+    await cancelledCard.getByRole('button', { name: '重新下载' }).waitFor();
+    assert.equal(await jobStatus(ids[4]).isVisible(), false, '取消后卡片回到版本选择，不再显示状态行');
     await jobStatus(ids[0]).locator('.cancel').click();
     await waitJob('cancelled', undefined, ids[0]);
     await waitGate(names[3]);
@@ -768,7 +773,17 @@ try {
       await failed.getByRole('button', { name: '重试' }).waitFor();
       assert.match(await workspace.locator('#task-list .task-error').filter({ hasText: 'HTTP 403' }).innerText(), /回到网页重新播放/);
       assert.equal(await workspace.locator('#task-list tbody tr[data-state="complete"]').count(), 0);
+      const badJobs = (await worker.evaluate(async () => (await chrome.storage.session.get('jobs')).jobs)).filter(job => job.resourceUrl?.endsWith('concurrent-bad.m3u8'));
+      assert.ok(badJobs.some(job => job.state === 'failed') && badJobs.at(-1).state === 'complete', '前提：concurrent-bad 先失败后重试成功');
       assert.equal(await workspace.locator('#task-list tbody tr[data-task-id]').filter({ hasText: 'concurrent-bad' }).count(), 0, '重试成功后不再列出旧的失败任务');
+      // Retry from the list starts a new task for the same resource and replaces the failed row.
+      const failedId = await failed.getAttribute('data-task-id');
+      await failed.getByRole('button', { name: '重试' }).click();
+      await workspace.waitForFunction(async failedId => {
+        const jobs = (await chrome.storage.session.get('jobs')).jobs;
+        return jobs.at(-1).id !== failedId && jobs.at(-1).resourceUrl.endsWith('expired.m3u8') && ['failed', 'complete'].includes(jobs.at(-1).state);
+      }, failedId);
+      await workspace.locator(`#task-list tr[data-task-id="${failedId}"]`).waitFor({ state: 'detached' });
       await workspace.screenshot({ path: path.join(artifacts, 'workspace-failed.png'), fullPage: true });
       await filter('已完成').click();
       assert.ok(await workspace.locator('#task-list tbody tr[data-task-id]').count() > 0);

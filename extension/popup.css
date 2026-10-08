@@ -51,8 +51,11 @@ article:last-child { margin-bottom: 0; }
 .card-actions { margin-top: auto; padding-top: 6px; display: flex; align-items: center; gap: 10px; }
 .card-actions .download { margin-left: auto; }
 /* A task's status row takes the place of the version row until the task fails or is cancelled. */
-.video-card:is([data-state="queued"], [data-state="inspecting"], [data-state="fetching"], [data-state="muxing"], [data-state="saving"], [data-state="complete"]):not(.reopen) .card-actions { display: none; }
-.video-card.reopen .job-mount, .video-card[data-state="cancelled"] .job-mount { display: none; }
+.video-card:is([data-state="queued"], [data-state="inspecting"], [data-state="fetching"], [data-state="muxing"], [data-state="saving"]) .card-actions { display: none; }
+/* A finished card keeps its version row hidden only while the file actions can stand in for it. */
+.video-card[data-state="complete"]:not(.reopen):has(.file-actions:not([hidden])) .card-actions { display: none; }
+.video-card.reopen .more-actions, .video-card[data-state="cancelled"] .job-mount { display: none; }
+.video-card.reopen .job-mount { margin-top: 6px; }
 .job-mount { margin-top: auto; }
 .video-card[data-state="failed"] .job-mount { margin-top: 0; }
 button, input { font: inherit; }
@@ -68,7 +71,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .download[data-state="complete"] .download-symbol { display: none; }
 .download[data-state="complete"] .complete-symbol { display: initial; }
 .icon-button { flex-shrink: 0; display: grid; place-items: center; width: 24px; height: 24px; padding: 4px; color: var(--muted); background: transparent; }
-.title-row .icon-button { opacity: .45; transition: opacity .14s; }
+.title-row .icon-button { opacity: .7; transition: opacity .14s; }
 .video-card:hover .title-row .icon-button, .title-row .icon-button:focus-visible, .title-row .icon-button[aria-expanded="true"] { opacity: 1; }
 .icon-button:hover:not(:disabled) { background: var(--bg); color: var(--ink); }
 .icon-button svg { width: 14px; height: 14px; }
@@ -115,7 +118,6 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .video-card .status .next-step { grid-column: 1 / -1; margin: 0; padding: 6px 9px; border-radius: 7px; color: var(--error); background: var(--error-bg); }
 .job-list { display: grid; gap: 10px; margin-top: 16px; }
 .job-list .status { margin: 0; }
-.job-list > h2 { color: var(--muted); font-size: 11px; }
 .status button { grid-column: 2; grid-row: 1 / span 3; align-self: center; margin: 0; background: transparent; border-color: color-mix(in srgb, var(--accent) 20%, var(--line)); color: var(--ink); }
 .status[data-state="failed"], #error, .inspection-error { color: var(--error); background: var(--error-bg); }
 .status[data-state="complete"] { color: var(--success); background: color-mix(in srgb, var(--success) 7%, var(--surface)); }
@@ -198,8 +200,6 @@ body.workspace { width: 100%; min-width: 360px; max-width: 1200px; margin: 0 aut
 .workspace .task-overview { margin-bottom: 20px; }
 .workspace footer { margin-top: 24px; padding: 18px 28px; }
 @media (max-width: 520px) {
-  .workspace .card-body { grid-template-columns: 100px minmax(0, 1fr); gap: 12px; }
-  .workspace .thumbnail { width: 100px; height: 102px; }
   .workspace main, .workspace header, .workspace footer { padding: 16px; }
 }
 .more-actions svg { stroke-width: 3.2; }
@@ -208,6 +208,7 @@ body.workspace { width: 100%; min-width: 360px; max-width: 1200px; margin: 0 aut
 .workspace #task-overview, .workspace #unmatched-jobs { display: none !important; }
 .workspace main { display: flex; flex-direction: column; }
 .workspace #task-list { order: -1; margin: 0 0 28px; }
+.workspace #error { order: -2; }
 .task-list { margin-top: 28px; }
 .task-list-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
 .task-list-note { margin-left: 6px; font-size: 11px; font-weight: 400; color: var(--muted); }
@@ -239,4 +240,4 @@ body.workspace { width: 100%; min-width: 360px; max-width: 1200px; margin: 0 aut
 .task-list-empty { padding: 18px; text-align: center; color: var(--muted); font-size: 12px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (prefers-color-scheme: dark) { .task-actions .open-file, .task-actions .retry { color: #15213a; } }
-@media (max-width: 720px) { .task-list th:nth-child(3), .task-list td:nth-child(3), .task-list th:nth-child(4), .task-list td:nth-child(4) { display: none; } }
+@media (max-width: 720px) { .task-list th:nth-child(4), .task-list td:nth-child(4) { display: none; } }
