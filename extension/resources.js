@@ -37,3 +37,22 @@ export function groupResources(items) {
   }
   return [...groups.values()].sort((a, b) => Number(Boolean(b.media)) - Number(Boolean(a.media)));
 }
+
+// Variant playlists are reached through their parent, so only roots are offered; direct files first.
+export function rootItems(group) {
+  const children = new Set(group.items.flatMap(item => (item.variants || []).map(variant => variant.url)));
+  const items = [...group.items].sort((a, b) => Number(a.kind !== 'file') - Number(b.kind !== 'file'));
+  const roots = items.filter(item => !children.has(item.url));
+  // A malformed cyclic playlist must still offer one item.
+  return roots.length ? roots : items.slice(0, 1);
+}
+
+// The card title and the saved filename both come from this name.
+export function groupName(group) {
+  return group.items.find(item => item.displayName)?.displayName || group.media?.title || group.items[0].name;
+}
+
+export function ownsJob(group, job) {
+  return job.groupKey === group.key || group.items.some(item => item.url === (job.resourceUrl || job.url) ||
+    item.variants?.some(variant => variant.url === job.url));
+}

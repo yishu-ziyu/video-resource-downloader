@@ -1,4 +1,4 @@
-import { groupResources, isXPost } from './resources.js';
+import { groupResources, isXPost, rootItems, groupName, ownsJob } from './resources.js';
 import { createVersionPicker, closeVersionPickers } from './version-picker.js';
 const $ = selector => document.querySelector(selector);
 const busy = job => job && !['complete', 'failed', 'cancelled'].includes(job.state);
@@ -52,14 +52,10 @@ function format(item) {
 
 function options(group) {
   const choices = [];
-  const children = new Set(group.items.flatMap(item => (item.variants || []).map(variant => variant.url)));
-  const items = [...group.items].sort((a, b) => Number(a.kind !== 'file') - Number(b.kind !== 'file'));
-  const roots = items.filter(item => !children.has(item.url));
-  // A malformed cyclic playlist must not leave an empty, clickable selector.
-  for (const item of roots.length ? roots : items.slice(0, 1)) {
+  for (const item of rootItems(group)) {
     choices.push({ item, value: JSON.stringify([item.url, null]),
       label: item.kind === 'hls' ? `${item.inspected && !item.variants?.length ? '原清单' : '自动最高'} · ${format(item)}` :
-        `${format(item)}${items.length > 1 ? ` · ${item.name}` : ' · 原文件'}` });
+        `${format(item)}${group.items.length > 1 ? ` · ${item.name}` : ' · 原文件'}` });
     for (const variant of item.variants || []) choices.push({ item, selectedUrl: variant.url,
       value: JSON.stringify([item.url, variant.url]), label: `${variant.height ? `${variant.height}p` : `${Math.round(variant.bandwidth / 1000)} kbps`} · ${hlsOutput(variant.format)}` });
   }
@@ -115,7 +111,7 @@ function card(group, job, pageUrl) {
   eyebrow.append(element('span', 'format-badge', group.items[0].kind === 'hls' ? 'HLS' : format(group.items[0])));
   info.append(eyebrow);
   const titleRow = element('div', 'title-row');
-  const name = group.items.find(item => item.displayName)?.displayName || media?.title || group.items[0].name;
+  const name = groupName(group);
   const title = element('h3', 'video-title', name); title.title = name;
   const edit = element('button', 'icon-button');
   edit.setAttribute('aria-label', '修改文件名'); edit.title = '修改文件名';
@@ -223,8 +219,8 @@ async function openDownload(action, downloadId) {
 
 function nextStep(message) {
   if (/不是完整视频|只是音轨|初始化片段/.test(message)) return '请重新播放，并选择这个视频的 HLS 主清单；不要单独下载音轨或初始化片段。';
-  if (/独立音轨|加密|DRM|分片结构|直播|MPEG-TS|格式不支持/.test(message)) return '该资源暂不支持。若列表中有直接视频文件，可选择原文件下载。';
-  if (/HTTP|过期|登录/.test(message)) return '回到网页重新播放，再选择新发现的资源。';
+  if (/独立音轨|暂不支持加密|未加密地址|非 HTTP|必须是 HTTP|DRM|分片结构|直播|MPEG-TS|格式不支持/.test(message)) return '该资源暂不支持。若列表中有直接视频文件，可选择原文件下载。';
+  if (/HTTP \d|过期|登录/.test(message)) return '回到网页重新播放，再选择新发现的资源。';
   if (/磁盘空间/.test(message)) return '释放磁盘空间后重试；也可选择较低清晰度，减少临时磁盘占用。';
   if (/限制/.test(message)) return '可尝试较低清晰度，或选择直接视频文件。';
   return '请检查网络；重新播放视频后可以再次下载。';
@@ -282,9 +278,7 @@ function render() {
 }
 
 function jobForGroup(group, jobs, pageUrl) {
-  const matching = jobs.filter(job => (!job.pageUrl || job.pageUrl === pageUrl) &&
-    (job.groupKey === group.key || group.items.some(item => item.url === (job.resourceUrl || job.url) ||
-      item.variants?.some(variant => variant.url === job.url))));
+  const matching = jobs.filter(job => (!job.pageUrl || job.pageUrl === pageUrl) && ownsJob(group, job));
   return matching.find(busy) || matching.at(-1);
 }
 function bytes(value) {

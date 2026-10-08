@@ -1,4 +1,4 @@
-import { matchMedia, groupResources, assetKey, isXPost } from './resources.js';
+import { matchMedia, groupResources, assetKey, isXPost, rootItems, groupName, ownsJob } from './resources.js';
 import { acquireSource, releaseSource, sourceRedirect } from './source-fetch.js';
 import { inspectHls } from './hls.js';
 import { validateMp4File } from './vendor/mp4.js';
@@ -228,9 +228,9 @@ async function start(tabId, url, selectedUrl) {
     const group = groupResources(data[`tab:${tabId}`] || []).find(group => group.items.includes(item));
     const groupKey = group.key;
     if ((await readJobs()).some(job => job.tabId === tabId && job.pageUrl === pageUrl && !terminal.has(job.state) &&
-      (job.groupKey === groupKey || group.items.some(resource => resource.url === (job.resourceUrl || job.url))))) throw new Error('这个视频已有下载任务，请勿重复下载。');
+      ownsJob(group, job))) throw new Error('这个视频已有下载任务，请勿重复下载。');
     const selected = item.variants?.find(variant => variant.url === selectedUrl);
-    const name = item.displayName || item.media?.title || item.name;
+    const name = groupName(group);
     const next = { id: crypto.randomUUID(), tabId, pageUrl, groupKey, url: selectedUrl || url, resourceUrl: url, name, kind: item.kind, mime: item.mime, audioUrl: selected?.audioUrl, requireAudio: selected?.requireAudio,
       filename: filename({ ...item, name }, item.kind === 'hls' ? '.ts' : null), state: item.kind === 'hls' ? 'queued' : 'inspecting',
       message: item.kind === 'hls' ? '等待 HLS 下载槽位；最多同时处理 3 个任务。' : '正在准备下载…', done: 0, total: 0 };
@@ -361,9 +361,7 @@ async function downloadFromMenu(info, tab) {
     const group = target?.id && groupResources(items).find(group => group.media?.key === `${frameId}:${target.id}`);
     if (!group) throw new Error(items.length ? '没能确认哪个资源属于这个视频。请在弹窗的资源列表里选择下载。' :
       '这个视频还没有可下载的地址。先播放几秒，再右键下载。');
-    const children = new Set(group.items.flatMap(item => (item.variants || []).map(variant => variant.url)));
-    const item = [...group.items].sort((a, b) => Number(a.kind !== 'file') - Number(b.kind !== 'file'))
-      .find(item => !children.has(item.url) && item.kind !== 'dash');
+    const item = rootItems(group).find(item => item.kind !== 'dash');
     if (!item) throw new Error('这个视频的格式暂不支持下载。');
     await start(tabId, item.url);
   } catch (error) { text = error.message; }

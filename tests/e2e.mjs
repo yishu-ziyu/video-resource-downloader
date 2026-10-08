@@ -963,6 +963,22 @@ try {
     await player.waitForFunction(() => document.querySelector('video').hasAttribute('data-downloader-highlight'));
     await panel.locator('body').screenshot({ path: path.join(artifacts, 'x-id-fixture.png') });
   });
+  await check('同组选第二个文件下载，文件名仍与卡片标题一致', async () => {
+    await player.goto(base + '/x-fixture.html');
+    await panel.evaluate(async tabId => {
+      const urls=['first-name.mp4','second-name.mp4'].map(name=>`https://video.twimg.com/ext_tw_video/4444/pu/vid/${name}`);
+      await chrome.storage.session.set({[`tab:${tabId}`]:urls.map(url=>({url,name:url.split('/').pop(),kind:'file',mime:'video/mp4',source:'验收夹具：同组文件'}))});
+    },tabId);
+    await panel.reload();
+    const card = panel.locator('article').filter({ hasText: 'second-name.mp4' });
+    assert.equal(await card.locator('.video-title').textContent(), 'first-name.mp4');
+    await card.getByRole('combobox', { name: '下载版本' }).click();
+    await card.getByRole('option', { name: 'MP4 · second-name.mp4', exact: true }).click();
+    await card.getByRole('button', { name: '下载', exact: true }).click();
+    const job = await panel.waitForFunction(async () => (await chrome.storage.session.get('jobs')).jobs?.find(job => job.resourceUrl?.endsWith('second-name.mp4'))).then(handle => handle.jsonValue());
+    assert.equal(job.filename, 'VideoDownloads/first-name.mp4');
+    await panel.waitForFunction(async id => ['complete','failed','cancelled'].includes((await chrome.storage.session.get('jobs')).jobs.find(job => job.id === id).state), job.id);
+  });
   await check('站内切页：只列出新视频，丢弃旧请求迟到响应，下载新文件并支持后退', async () => {
     await player.goto(base + '/spa.html');
     await row('old.mp4').waitFor();
