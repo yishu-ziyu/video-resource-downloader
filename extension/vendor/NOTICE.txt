@@ -1,0 +1,6 @@
+This extension bundles Mediabunny 1.61.1, licensed under MPL-2.0.
+The full license is in mediabunny-LICENSE.txt.
+Unmodified corresponding library source: source/mediabunny-1.61.1.tgz in the distribution.
+Bundling entrypoint: source/src/mp4.js; build configuration: source/scripts/build-media.mjs.
+Upstream source package: https://registry.npmjs.org/mediabunny/-/mediabunny-1.61.1.tgz
+Source files under MPL-2.0 retain their original notices. No library source modifications were made.

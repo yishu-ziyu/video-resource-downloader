@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>视频资源下载器</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+  <header>
+    <div class="brand"><img class="brand-icon" src="icons/icon-48.png" alt="" width="40" height="40"><div><h1>视频资源下载器</h1><p id="page-name">当前网页</p></div></div>
+    <span class="local-tag">本地处理</span>
+  </header>
+  <main>
+    <div class="section-heading"><h2>当前页面 <span id="count">0</span></h2><button id="workspace-open" class="workspace-open">展开下载面板 ↗</button></div>
+    <p id="error" role="alert" hidden></p>
+    <section id="task-overview" class="task-overview" aria-label="下载任务总览" hidden><div class="overview-heading"><strong>下载任务</strong><span>HLS 最多同时下载 3 个</span></div><div class="overview-stats"></div></section>
+    <p id="menu-notice" class="notice" role="status" hidden></p>
+    <p id="other-job" class="notice" hidden></p>
+    <div id="resources"></div>
+    <details id="other-resources" class="other-resources" hidden><summary></summary><div id="other-list"></div></details>
+    <div id="empty" hidden><span class="empty-icon" aria-hidden="true">▷</span><strong id="empty-title"></strong><p id="empty-text"></p>
+      <div class="empty-actions"><button id="empty-locate" hidden>定位到视频</button><button id="empty-reload" class="secondary">↻ 刷新网页</button></div></div>
+    <div id="unmatched-jobs" class="job-list"></div>
+    <template id="job-template"><section class="status" aria-live="polite"><strong class="job-title"></strong><p class="job-message"></p><progress class="job-progress" aria-label="下载进度" hidden></progress><p class="job-metrics" hidden></p><button class="cancel secondary" hidden>取消</button><div class="file-actions" hidden><button class="open-file">打开</button><button class="show-file secondary">在文件夹中显示</button></div><p class="next-step" hidden></p></section></template>
+  </main>
+  <footer><button id="downloads" class="footer-button">浏览器下载记录 <span aria-hidden="true">↗</span></button><details id="help"><summary>使用说明</summary><p>仅下载你有权保存的内容。直接文件不转码；HLS 转为 MP4，不重新编码；MP4 不能原样容纳的编码保留原始 TS。默认最高码率，最多同时处理 3 个 HLS 任务，更多任务自动排队。TS 使用临时磁盘；fMP4 音画输入合计最大 256 MiB。暂不支持 DRM、直播、DASH 或 MPEG-TS 独立音轨合并。文件保存在 VideoDownloads 文件夹。</p></details></footer>
+  <dialog id="preview" aria-labelledby="preview-title">
+    <div class="preview-header"><div><h2 id="preview-title"></h2><p class="preview-subtitle">原文件预览 · 默认静音</p></div><button id="preview-close" class="icon-button" aria-label="关闭预览">×</button></div>
+    <video id="preview-video" controls muted playsinline preload="metadata"></video>
+    <p id="preview-loading" class="preview-hint">正在加载视频…</p>
+    <p id="preview-error" role="alert" hidden></p>
+    <button id="preview-page" class="secondary" hidden>回到网页视频 ↗</button>
+  </dialog>
+  <script type="module" src="popup.js"></script>
+</body></html>
