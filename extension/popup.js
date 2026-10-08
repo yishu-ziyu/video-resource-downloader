@@ -5,6 +5,8 @@ const busy = job => job && !['complete', 'failed', 'cancelled'].includes(job.sta
 const selections = new Map();
 const inspecting = new Set();
 const statusNodes = new Map();
+// Cards rebuild on every resource change; remember which finished task the user reopened.
+const reopened = new Map();
 const workspace = new URL(location.href).searchParams.get('view') === 'workspace';
 document.body.classList.toggle('workspace', workspace);
 let tabId;
@@ -104,19 +106,19 @@ function card(group, job, pageUrl) {
     image.addEventListener('error', () => { image.remove(); placeholder.hidden = false; missing.hidden = false; });
     thumbnail.prepend(image);
   }
-  thumbnail.append(element('span', 'duration', duration(media?.duration)));
+  if (media?.duration > 0) thumbnail.append(element('span', 'duration', duration(media.duration)));
   const thumbnailHint = element('span', 'locate-hint'); thumbnail.append(thumbnailHint);
   const info = element('div', 'card-info');
-  const eyebrow = element('div', 'card-eyebrow', media ? '网页视频' : '未确认对应视频');
-  eyebrow.append(element('span', 'format-badge', group.items[0].kind === 'hls' ? 'HLS' : format(group.items[0])));
-  info.append(eyebrow);
   const titleRow = element('div', 'title-row');
   const name = groupName(group);
   const title = element('h3', 'video-title', name); title.title = name;
   const edit = element('button', 'icon-button');
   edit.setAttribute('aria-label', '修改文件名'); edit.title = '修改文件名';
   edit.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7l-4-4L4 15z"/></svg>';
-  titleRow.append(title, edit);
+  const infoToggle = element('button', 'icon-button info-toggle');
+  infoToggle.setAttribute('aria-label', '资源信息'); infoToggle.title = '资源信息'; infoToggle.setAttribute('aria-expanded', 'false');
+  infoToggle.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>';
+  titleRow.append(title, edit, infoToggle);
   const rename = element('form', 'rename'); rename.hidden = true;
   const input = element('input'); input.value = name; input.maxLength = 120; input.required = true; input.setAttribute('aria-label', '文件名');
   const save = element('button', '', '保存'); save.setAttribute('aria-label', '保存名称'); save.type = 'submit';
@@ -131,9 +133,11 @@ function card(group, job, pageUrl) {
   edit.addEventListener('click', () => { rename.hidden = !rename.hidden; if (!rename.hidden) { input.focus(); input.select(); } });
   const types = [...new Set(group.items.map(item => item.kind === 'hls' ? 'HLS' : format(item)))].join(' / ');
   const dimensions = media?.width && media?.height ? `${media.width} × ${media.height}` : '尺寸未知';
-  // The badge already names the format, so a matched card's meta only shows size facts.
-  const metaBase = media ? dimensions : `${types} · ${new URL(group.items[0].url).hostname}`;
-  const meta = element('p', 'video-meta', metaBase);
+  // The badge names the format, so the meta text only shows size facts or, unmatched, the host.
+  const metaBase = media ? dimensions : new URL(group.items[0].url).hostname;
+  const metaLine = element('p', 'meta-line');
+  const meta = element('span', 'video-meta', metaBase);
+  metaLine.append(element('span', 'format-badge', types), meta);
   const sizeWarning = element('p', 'size-warning'); sizeWarning.hidden = true;
   function updateSize(choice) {
     const { text, warning } = sizeInfo(choice);
@@ -153,10 +157,9 @@ function card(group, job, pageUrl) {
   selections.set(group.key, picker.value);
   const download = element('button', 'download');
   download.dataset.awaitingMatch = String(unconfirmed);
-  const fill = element('span', 'download-fill'); fill.setAttribute('aria-hidden', 'true');
   const downloadIcon = element('span', 'download-icon'); downloadIcon.setAttribute('aria-hidden', 'true');
   downloadIcon.innerHTML = '<svg viewBox="0 0 24 24"><path class="download-symbol" d="M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4"/><path class="complete-symbol" d="m5 12 4 4L19 6"/></svg>';
-  download.append(fill, downloadIcon, element('span', 'download-label', '下载'));
+  download.append(downloadIcon, element('span', 'download-label', '下载'));
   download.disabled = Boolean(busy(job)) || choices.find(choice => choice.value === picker.value)?.item.kind === 'dash' || unconfirmed;
   download.addEventListener('click', () => {
     const choice = choices.find(choice => choice.value === picker.value);
@@ -175,10 +178,7 @@ function card(group, job, pageUrl) {
     if (choice.item.kind === 'file') openPreview(group, choice.item, thumbnail);
     else if (media) void locate(media);
   });
-  actions.append(picker.root, download);
-  info.append(titleRow, rename, meta, actions);
-  body.append(thumbnail, info); article.append(body, sizeWarning);
-  const tools = element('div', 'card-tools');
+  actions.append(picker.root);
   const hls = group.items.find(item => item.kind === 'hls' && (!item.inspected || item.inspectionError));
   if (hls) {
     const read = element('button', 'secondary read-quality', inspecting.has(hls.url) ? '正在读取…' : '读取清晰度');
@@ -188,11 +188,18 @@ function card(group, job, pageUrl) {
       await command({ type: 'inspect', tabId, url: hls.url });
       inspecting.delete(hls.url); snapshot = ''; await render();
     });
-    tools.append(read);
+    actions.append(read);
   }
-  const technical = element('details', 'technical');
-  const summary = element('summary', '', media ? `资源信息${group.items.length > 1 ? ` · ${group.items.length} 个地址` : ''}` : '未确认对应视频 · 查看资源');
-  technical.append(summary);
+  actions.append(download);
+  // A finished task hides the version row; "更多操作" on its status brings it back for another download.
+  const jobMount = element('div', 'job-mount');
+  info.append(titleRow, rename, metaLine, actions, jobMount);
+  body.append(thumbnail, info); article.append(body, sizeWarning);
+  const technical = element('div', 'technical'); technical.hidden = true;
+  technical.append(element('strong', '', media ? `资源信息${group.items.length > 1 ? ` · ${group.items.length} 个地址` : ''}` : '未确认对应视频'));
+  infoToggle.addEventListener('click', () => {
+    technical.hidden = !technical.hidden; infoToggle.setAttribute('aria-expanded', String(!technical.hidden));
+  });
   for (const item of group.items) {
     technical.append(element('span', 'resource-name', item.name), element('span', 'resource-url', item.url));
   }
@@ -201,10 +208,9 @@ function card(group, job, pageUrl) {
     location.addEventListener('click', () => locate(media)); technical.append(location);
   }
   if (!media) technical.append(element('p', '', '无法确认这个资源对应哪个网页视频，请核对后下载。'));
-  tools.prepend(technical); article.append(tools);
   const inspectionError = group.items.find(item => item.inspectionError)?.inspectionError;
   if (inspectionError) article.append(element('p', 'inspection-error', `无法读取清晰度：${inspectionError}`));
-  const jobMount = element('div', 'job-mount'); article.append(jobMount);
+  article.append(technical);
   return article;
 }
 
@@ -248,27 +254,11 @@ function downloadProgress(job, nativeDownload) {
   return {};
 }
 
-function updateButton(button, job, nativeDownload) {
-  let label = button.dataset.awaitingMatch === 'true' ? '等待匹配' : '下载';
-  const { percent, source } = downloadProgress(job, nativeDownload);
-  if (job) {
-    const labels = { queued: '排队中', inspecting: '检查中…', fetching: '下载中…', muxing: '封装中…', saving: '保存中…',
-      complete: '再次下载', failed: '重试下载', cancelled: '重新下载' };
-    label = labels[job.state] || label;
-    if (source === 'segments') label = `片段 ${percent}%`;
-    else if (source === 'bytes') label = `下载 ${percent}%`;
-    else if (source === 'unknown') label = '下载中…';
-  }
-  button.querySelector('.download-label').textContent = label;
+// A running task replaces the button with its status row, so the button only names the next action.
+function updateButton(button, job) {
+  const labels = { complete: '再次下载', failed: '重试下载', cancelled: '重新下载' };
+  button.querySelector('.download-label').textContent = button.dataset.awaitingMatch === 'true' ? '等待匹配' : labels[job?.state] || '下载';
   button.dataset.state = job?.state || 'idle';
-  button.dataset.progressSource = source || '';
-  button.dataset.progress = percent === undefined ? '' : String(percent);
-  button.style.setProperty('--progress', `${percent || 0}%`);
-  button.classList.toggle('has-progress', percent !== undefined);
-  button.setAttribute('aria-busy', String(Boolean(busy(job))));
-  button.title = source === 'segments' ? `按片段计：${job.done} / ${job.total}` :
-    source === 'bytes' ? `浏览器已接收 ${nativeDownload.bytesReceived} / ${nativeDownload.totalBytes} 字节` : label;
-  return { percent, source };
 }
 
 function render() {
@@ -295,12 +285,21 @@ function renderStatus(job, nativeDownload, pageUrl, progressInfo) {
     for (const [selector, action] of [['.open-file', 'open'], ['.show-file', 'show']]) {
       node.querySelector(selector).addEventListener('click', () => openDownload(action, Number(node.dataset.downloadId)));
     }
+    node.querySelector('.more-actions').addEventListener('click', () => {
+      const article = node.closest('.video-card');
+      if (article) { reopened.set(article.dataset.key, job.id); article.classList.add('reopen'); }
+    });
     statusNodes.set(job.id, node);
   }
   node.dataset.state = job.state;
   const titles = { queued: '排队等待', inspecting: '准备下载', fetching: '下载中', muxing: '封装 MP4', saving: '正在保存', complete: '下载完成', failed: '下载失败', cancelled: '已取消' };
   const oldPage = job.pageUrl && job.pageUrl !== pageUrl;
-  node.querySelector('.job-title').textContent = oldPage ? `上一页面的下载 · ${job.name} · ${titles[job.state] || '下载任务'}` : titles[job.state] || '下载任务';
+  const title = `${titles[job.state] || '下载任务'}${progressInfo.percent === undefined ? '' : ` ${progressInfo.percent}%`}`;
+  node.querySelector('.job-title').textContent = oldPage ? `上一页面的下载 · ${job.name} · ${title}` : title;
+  node.dataset.progressSource = progressInfo.source || '';
+  node.dataset.progress = progressInfo.percent === undefined ? '' : String(progressInfo.percent);
+  node.title = progressInfo.source === 'segments' ? `按片段计：${job.done} / ${job.total}` :
+    progressInfo.source === 'bytes' ? `浏览器已接收 ${nativeDownload.bytesReceived} / ${nativeDownload.totalBytes} 字节` : '';
   node.querySelector('.job-message').textContent = job.message;
   node.querySelector('.cancel').hidden = !busy(job);
   node.querySelector('.file-actions').hidden = job.state !== 'complete' || job.downloadId === undefined;
@@ -369,11 +368,11 @@ async function renderView() {
   for (const [index, group] of groups.entries()) {
     const job = cardJobs[index];
     const article = cardNodes[index];
-    const info = updateButton(article.querySelector('.download'), job, nativeDownloads.get(job?.id));
+    updateButton(article.querySelector('.download'), job);
+    article.classList.toggle('reopen', job?.state === 'complete' && reopened.get(group.key) === job.id);
     article.dataset.state = job?.state || 'idle';
-    article.style.setProperty('--task-progress', `${info.percent || 0}%`);
     if (job) {
-      article.querySelector('.job-mount').append(renderStatus(job, nativeDownloads.get(job.id), page.url, info));
+      article.querySelector('.job-mount').append(renderStatus(job, nativeDownloads.get(job.id), page.url, downloadProgress(job, nativeDownloads.get(job.id))));
       visible.add(job.id);
     }
   }
@@ -384,15 +383,10 @@ async function renderView() {
     visible.add(job.id);
   }
   for (const [id, node] of statusNodes) if (!visible.has(id)) { node.remove(); statusNodes.delete(id); }
-  const summaryJobs = jobs.filter(job => busy(job) || job.pageUrl === page.url || job === jobs.at(-1));
-  $('#task-overview').hidden = summaryJobs.length < 2;
-  const counts = [summaryJobs.filter(job => busy(job) && job.state !== 'queued').length,
-    summaryJobs.filter(job => job.state === 'queued').length, summaryJobs.filter(job => job.state === 'complete').length];
-  const labels = ['进行中', '排队中', '已完成'];
-  $('#task-overview .overview-stats').replaceChildren(...counts.map((count, index) => {
-    const stat = element('div', 'overview-stat'); stat.dataset.kind = ['active', 'queued', 'complete'][index];
-    stat.append(element('strong', '', String(count)), element('span', '', labels[index])); return stat;
-  }));
+  const active = jobs.filter(job => busy(job) && job.state !== 'queued').length;
+  const queued = jobs.filter(job => job.state === 'queued').length;
+  $('#task-overview').hidden = !active && !queued;
+  $('#task-overview .overview-text').textContent = [active && `${active} 个下载中`, queued && `${queued} 个排队`].filter(Boolean).join(' · ');
   clearTimeout(progressTimer);
   if (jobs.some(job => job.kind === 'file' && job.state === 'saving')) {
     progressTimer = setTimeout(() => void render().catch(showError), 400);
@@ -462,11 +456,12 @@ $('#preview-video').addEventListener('error', () => {
 });
 $('#preview-page').addEventListener('click', () => { if (previewSource?.media) void locate(previewSource.media); });
 $('#workspace-open').hidden = workspace;
+$('#overview-open').hidden = workspace;
 $('#empty-reload').addEventListener('click', () => chrome.tabs.reload(tabId).catch(showError));
 $('#other-resources').addEventListener('toggle', () => {
   if ($('#other-resources').hidden) return;
   try { localStorage.setItem(OTHER_OPEN, $('#other-resources').open ? '1' : '0'); } catch {}
 });
-$('#workspace-open').addEventListener('click', () => chrome.tabs.create({ url: chrome.runtime.getURL(`popup.html?tab=${tabId}&view=workspace`) }).catch(showError));
+for (const button of [$('#workspace-open'), $('#overview-open')]) button.addEventListener('click', () => chrome.tabs.create({ url: chrome.runtime.getURL(`popup.html?tab=${tabId}&view=workspace`) }).catch(showError));
 $('#downloads').addEventListener('click', () => chrome.tabs.create({ url: 'chrome://downloads/' }).catch(showError));
 void init().catch(showError);

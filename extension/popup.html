@@ -9,7 +9,7 @@
   <main>
     <div class="section-heading"><h2>当前页面 <span id="count">0</span></h2><button id="workspace-open" class="workspace-open">展开下载面板 ↗</button></div>
     <p id="error" role="alert" hidden></p>
-    <section id="task-overview" class="task-overview" aria-label="下载任务总览" hidden><div class="overview-heading"><strong>下载任务</strong><span>HLS 最多同时下载 3 个</span></div><div class="overview-stats"></div></section>
+    <section id="task-overview" class="task-overview" aria-label="下载任务总览" hidden><span class="overview-dot" aria-hidden="true"></span><span class="overview-text"></span><button id="overview-open" class="workspace-open">在面板中管理 ↗</button></section>
     <p id="menu-notice" class="notice" role="status" hidden></p>
     <p id="other-job" class="notice" hidden></p>
     <div id="resources"></div>
@@ -17,7 +17,7 @@
     <div id="empty" hidden><span class="empty-icon" aria-hidden="true">▷</span><strong id="empty-title"></strong><p id="empty-text"></p>
       <div class="empty-actions"><button id="empty-locate" hidden>定位到视频</button><button id="empty-reload" class="secondary">↻ 刷新网页</button></div></div>
     <div id="unmatched-jobs" class="job-list"></div>
-    <template id="job-template"><section class="status" aria-live="polite"><strong class="job-title"></strong><p class="job-message"></p><progress class="job-progress" aria-label="下载进度" hidden></progress><p class="job-metrics" hidden></p><button class="cancel secondary" hidden>取消</button><div class="file-actions" hidden><button class="open-file">打开</button><button class="show-file secondary">在文件夹中显示</button></div><p class="next-step" hidden></p></section></template>
+    <template id="job-template"><section class="status" aria-live="polite"><strong class="job-title"></strong><p class="job-message"></p><progress class="job-progress" aria-label="下载进度" hidden></progress><p class="job-metrics" hidden></p><button class="cancel secondary" aria-label="取消" title="取消" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button><div class="file-actions" hidden><button class="open-file">打开</button><button class="show-file secondary" aria-label="在文件夹中显示" title="在文件夹中显示"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button><button class="more-actions secondary" aria-label="更多操作" title="再次下载或换一个版本"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg></button></div><p class="next-step" hidden></p></section></template>
   </main>
   <footer><button id="downloads" class="footer-button">浏览器下载记录 <span aria-hidden="true">↗</span></button><details id="help"><summary>使用说明</summary><p>仅下载你有权保存的内容。直接文件不转码；HLS 转为 MP4，不重新编码；MP4 不能原样容纳的编码保留原始 TS。默认最高码率，最多同时处理 3 个 HLS 任务，更多任务自动排队。TS 使用临时磁盘；fMP4 音画输入合计最大 256 MiB。暂不支持 DRM、直播、DASH 或 MPEG-TS 独立音轨合并。文件保存在 VideoDownloads 文件夹。</p></details></footer>
   <dialog id="preview" aria-labelledby="preview-title">

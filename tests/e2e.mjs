@@ -330,8 +330,13 @@ try {
       return status?.dataset.state === state && (!contains || status.textContent.includes(contains));
     }, { state, contains, jobId });
   }
+  // A finished task folds the version row behind "更多操作", as a user would see it.
+  async function revealActions(card) {
+    if (!(await card.locator('.card-actions').isVisible())) await card.getByRole('button', { name: '更多操作' }).click();
+  }
   async function clickDownload(card) {
     const previous = await worker.evaluate(async () => ((await chrome.storage.session.get('jobs')).jobs || []).map(job => job.id));
+    await revealActions(card);
     await card.locator('.download').click();
     const created = await card.page().waitForFunction(async previous => {
       const jobs = (await chrome.storage.session.get('jobs')).jobs || [];
@@ -697,9 +702,10 @@ try {
     assert.equal(await card.locator('.thumbnail img').evaluate(i => i.complete && i.naturalWidth > 0), true);
     assert.match(await card.locator('.duration').innerText(), /0:03/);
     assert.match(await card.locator('.video-meta').innerText(), /^160 × 90/);
-    await card.locator('.technical summary').click();
+    await card.getByRole('button', { name: '资源信息' }).click();
     await card.getByRole('button', { name: '定位到网页视频' }).click();
-    await card.locator('.technical summary').click();
+    await card.getByRole('button', { name: '资源信息' }).click();
+    assert.equal(await card.locator('.technical').isVisible(), false);
     await player.waitForFunction(() => document.querySelector('video').hasAttribute('data-downloader-highlight'));
   });
   await check('初始化音轨不能冒充完整 MP4，也不能显示下载完成', async () => {
@@ -734,6 +740,8 @@ try {
     await clickDownload(row('expired.m3u8'));
     await waitJob('failed', 'HTTP 403');
     assert.equal(await worker.evaluate(async () => (await chrome.downloads.search({})).length), before);
+    await row('expired.m3u8').scrollIntoViewIfNeeded();
+    await panel.screenshot({ path: path.join(artifacts, 'failed-403.png') });
   });
   await check('播放后识别 MP4，下载内容与源文件完全一致并可解码', async () => {
     await clickDownload(row('sample.mp4'));
@@ -755,6 +763,7 @@ try {
   await check('HLS 清晰度来自真实清单，手动选择后下载对应版本', async () => {
     await player.getByText('请求 HLS', { exact: true }).click();
     const card = row('master.m3u8');
+    await revealActions(card);
     await card.getByRole('button', { name: '读取清晰度' }).click();
     const select = card.getByRole('combobox', { name: '下载版本' });
     await select.click();
@@ -775,6 +784,7 @@ try {
     const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_streams', '-of', 'json', file]));
     assert.equal(probe.streams.find(stream => stream.codec_type === 'video').height, 46);
     await panel.reload();
+    await revealActions(row('master.m3u8'));
     assert.match(await row('master.m3u8').getByRole('combobox', { name: '下载版本' }).innerText(), /46p/, '重开后不能把已下载版本误显示为最高版本');
     assert.ok(requests.slice(before).includes('/low.m3u8'));
     assert.ok(!requests.slice(before).includes('/stream.m3u8'));
@@ -783,13 +793,16 @@ try {
     await player.getByText('请求进度视频', { exact: true }).click();
     const card = row('progress.m3u8');
     await clickDownload(card); await waitJob('fetching');
-    await panel.waitForFunction(() => document.querySelector('.download[data-progress-source="segments"]')?.dataset.progress === '33');
+    await panel.waitForFunction(() => document.querySelector('.status[data-progress-source="segments"]')?.dataset.progress === '33');
     const state = await getJob();
     assert.equal(state.done, 1); assert.equal(state.total, 3);
-    assert.match(await card.locator('.download').innerText(), /片段 33%/);
+    assert.match(await card.locator('.status .job-title').innerText(), /下载中 33%/);
+    assert.equal(await card.locator('.download').isVisible(), false, '进度只在状态行显示一次');
     await panel.locator('body').screenshot({ path: path.join(artifacts, 'hls-progress.png') });
     await downloaded();
-    assert.match(await card.locator('.download').innerText(), /再次下载/);
+    assert.equal(await card.locator('.download').isVisible(), false);
+    await card.getByRole('button', { name: '更多操作' }).click();
+    await card.getByRole('button', { name: '再次下载' }).waitFor();
   });
   for (const [request, name, known] of [['请求慢速文件','slow-file.mp4',true], ['请求未知大小文件','unknown-size.mp4',false]]) {
     await check(`直接文件按钮使用真实字节进度：${known ? '已知大小' : '未知大小不显示假百分比'}`, async () => {
@@ -797,14 +810,14 @@ try {
       const card = row(name);
       await clickDownload(card); await waitJob('saving');
       if (known) {
-        await panel.waitForFunction(() => Number(document.querySelector('.download[data-progress-source="bytes"]')?.dataset.progress) > 0);
+        await panel.waitForFunction(() => Number(document.querySelector('.status[data-progress-source="bytes"]')?.dataset.progress) > 0);
         const info = await worker.evaluate(async id => (await chrome.downloads.search({ id }))[0], (await getJob()).downloadId);
         assert.equal(info.totalBytes, (await readFile(path.join(fixtures, 'sample.mp4'))).length);
-        const fraction = Number(await card.locator('.download').getAttribute('data-progress'));
+        const fraction = Number(await card.locator('.status').getAttribute('data-progress'));
         assert.ok(fraction <= Math.round(info.bytesReceived / info.totalBytes * 100));
       } else {
-        await panel.waitForFunction(() => document.querySelector('.download[data-progress-source="unknown"]'));
-        assert.ok(!(await card.locator('.download').innerText()).includes('%'));
+        await panel.waitForFunction(() => document.querySelector('.status[data-progress-source="unknown"]'));
+        assert.ok(!(await card.locator('.status .job-title').innerText()).includes('%'));
       }
       await downloaded();
     });
@@ -842,7 +855,7 @@ try {
       await waitTempEmpty();
       assert.equal(await row(resource).locator('.status').isVisible(), true);
       assert.equal(await row(resource).locator('.next-step').isVisible(), true);
-      assert.match(await row(resource).locator('.download').innerText(), /重试下载/);
+      await row(resource).getByRole('button', { name: '重试下载' }).waitFor();
       assert.equal(await worker.evaluate(async () => (await chrome.downloads.search({})).length), before);
     });
   }
