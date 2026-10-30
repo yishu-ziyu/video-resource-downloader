@@ -57,6 +57,8 @@ npm test    # 需要 FFmpeg / ffprobe
 
 模块划分：`media-taxonomy.js` 媒体分类与命名中枢 · `catalog.js` 页面资源目录 · `background.js` 下载任务引擎 · `content.js` 站点适配器注册表 · `card-model.js` 弹窗视图模型 · `offscreen.js` + `hls.js` HLS 与来源抓取 · `source-fetch.js` Referer 来源租约。新增站点只需在适配器注册表加一条 `{name, extract, relay}`。
 
+`scripts/` 下的开发工具：`build-media` / `build-icons`（构建）、`probe-site.mjs <site>`（隔离 Chromium 探测真实站点，`TARGET_URL` 指定地址）、`verify-source-real.mjs`（回放真实失败资源验证来源链路）、`reload-ext.mjs`（向 `localhost:9222` 调试端口的 Chrome 发重载命令）。
+
 ## 更新日志
 
 见 [CHANGELOG.md](CHANGELOG.md)。

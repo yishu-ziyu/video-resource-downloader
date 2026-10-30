@@ -5,3 +5,7 @@ artifacts/
 # Generated release packages
 video-resource-downloader-*.zip
 .serena/
+
+# Local secrets must never reach the public repo
+.env
+.env.*
