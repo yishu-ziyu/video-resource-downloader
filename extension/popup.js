@@ -1,7 +1,6 @@
-import { groupResources, isXPost, rootItems, groupName, ownsJob } from './resources.js';
+import { busy, bytes, downloadProgress, nextStep, describePage } from './card-model.js';
 import { createVersionPicker, closeVersionPickers } from './version-picker.js';
 const $ = selector => document.querySelector(selector);
-const busy = job => job && !['complete', 'failed', 'cancelled'].includes(job.state);
 const selections = new Map();
 const inspecting = new Set();
 const statusNodes = new Map();
@@ -35,48 +34,6 @@ async function command(message) {
   } catch (error) { $('#error').textContent = error.message; $('#error').hidden = false; }
 }
 
-function duration(seconds) {
-  if (!Number.isFinite(seconds) || seconds <= 0) return '时长未知';
-  const total = Math.round(seconds);
-  const minutes = Math.floor(total / 60);
-  return minutes >= 60 ? `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}` :
-    `${minutes}:${String(total % 60).padStart(2, '0')}`;
-}
-
-// TS and fMP4 HLS both save as MP4; TS is kept only when MP4 cannot hold its codecs unchanged.
-const hlsOutput = format => format === 'TS' ? 'MP4' : format || '待检查';
-function format(item) {
-  if (item.kind === 'hls') return hlsOutput(item.format);
-  if (item.kind === 'dash') return 'DASH · 暂不支持';
-  const suffix = new URL(item.url).pathname.match(/\.(mp4|webm|mov|mkv|m4v|ogv)$/i)?.[1];
-  return suffix?.toUpperCase() || (/mp4/i.test(item.mime) ? 'MP4' : /webm/i.test(item.mime) ? 'WEBM' : '原文件');
-}
-
-function options(group) {
-  const choices = [];
-  for (const item of rootItems(group)) {
-    choices.push({ item, value: JSON.stringify([item.url, null]),
-      label: item.kind === 'hls' ? `${item.inspected && !item.variants?.length ? '原清单' : '自动最高'} · ${format(item)}` :
-        `${format(item)}${group.items.length > 1 ? ` · ${item.name}` : ' · 原文件'}` });
-    for (const variant of item.variants || []) choices.push({ item, selectedUrl: variant.url,
-      value: JSON.stringify([item.url, variant.url]), label: `${variant.height ? `${variant.height}p` : `${Math.round(variant.bandwidth / 1000)} kbps`} · ${hlsOutput(variant.format)}` });
-  }
-  return choices;
-}
-
-const FMP4_LIMIT = 256 * 1024 ** 2;
-// File sizes come from response headers; HLS sizes are estimates from bitrate × playlist duration.
-function sizeInfo(choice) {
-  if (!choice) return {};
-  if (choice.item.kind === 'file') return { text: choice.item.size > 0 ? bytes(choice.item.size) : '' };
-  const variant = choice.selectedUrl ? choice.item.variants?.find(variant => variant.url === choice.selectedUrl) : choice.item.variants?.[0];
-  const rate = variant?.averageBandwidth || variant?.bandwidth;
-  if (!(variant?.duration > 0 && rate > 0)) return {};
-  const estimate = rate / 8 * variant.duration;
-  return { text: `约 ${bytes(estimate)}`, warning: variant.format === 'MP4' && estimate > FMP4_LIMIT ?
-    `预计约 ${bytes(estimate)}，可能超过 fMP4 合并的 256 MiB 上限，下载可能失败。建议改选较低清晰度。` : '' };
-}
-
 async function locate(media) {
   $('#error').hidden = true;
   try {
@@ -86,32 +43,31 @@ async function locate(media) {
   } catch (error) { $('#error').textContent = error.message; $('#error').hidden = false; }
 }
 
-function card(group, job, pageUrl) {
+// Builds DOM from a describeCard() descriptor; display decisions live in card-model.js.
+function card(desc) {
+  const { group, media, job } = desc;
   const article = element('article', 'video-card');
-  article.dataset.key = group.key;
-  const media = group.media;
-  const unconfirmed = isXPost(pageUrl) && !media;
+  article.dataset.key = desc.key;
   const body = element('div', 'card-body');
   const thumbnail = element('button', 'thumbnail');
   thumbnail.type = 'button';
   thumbnail.setAttribute('aria-label', '预览视频');
   const placeholder = element('span', 'placeholder-icon', '▷');
-  const missing = element('span', 'thumbnail-copy', media ? '暂无封面' : '未匹配视频');
-  if (!media?.poster) thumbnail.dataset.format = group.items[0].kind === 'hls' ? 'HLS' : format(group.items[0]).split(' · ')[0];
-  if (!media?.poster) thumbnail.append(element('span', 'format-mark', group.items[0].kind === 'hls' ? 'HLS' : format(group.items[0])));
+  const missing = element('span', 'thumbnail-copy', desc.missingText);
+  if (!desc.posterSrc) thumbnail.dataset.format = desc.posterMark.split(' · ')[0];
+  if (!desc.posterSrc) thumbnail.append(element('span', 'format-mark', desc.posterMark));
   thumbnail.append(placeholder, missing);
-  if (media?.poster) {
-    const image = element('img'); image.src = media.poster; image.alt = media.title; image.referrerPolicy = 'no-referrer';
+  if (desc.posterSrc) {
+    const image = element('img'); image.src = desc.posterSrc; image.alt = media?.title || desc.name; image.referrerPolicy = 'no-referrer';
     placeholder.hidden = true; missing.hidden = true;
     image.addEventListener('error', () => { image.remove(); placeholder.hidden = false; missing.hidden = false; });
     thumbnail.prepend(image);
   }
-  if (media?.duration > 0) thumbnail.append(element('span', 'duration', duration(media.duration)));
+  if (desc.durationText) thumbnail.append(element('span', 'duration', desc.durationText));
   const thumbnailHint = element('span', 'locate-hint'); thumbnail.append(thumbnailHint);
   const info = element('div', 'card-info');
   const titleRow = element('div', 'title-row');
-  const name = groupName(group);
-  const title = element('h3', 'video-title', name); title.title = name;
+  const title = element('h3', 'video-title', desc.name); title.title = desc.name;
   const edit = element('button', 'icon-button');
   edit.setAttribute('aria-label', '修改文件名'); edit.title = '修改文件名';
   edit.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7l-4-4L4 15z"/></svg>';
@@ -120,7 +76,7 @@ function card(group, job, pageUrl) {
   infoToggle.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>';
   titleRow.append(title, edit, infoToggle);
   const rename = element('form', 'rename'); rename.hidden = true;
-  const input = element('input'); input.value = name; input.maxLength = 120; input.required = true; input.setAttribute('aria-label', '文件名');
+  const input = element('input'); input.value = desc.name; input.maxLength = 120; input.required = true; input.setAttribute('aria-label', '文件名');
   const save = element('button', '', '保存'); save.setAttribute('aria-label', '保存名称'); save.type = 'submit';
   rename.append(input, save);
   rename.addEventListener('submit', async event => {
@@ -131,55 +87,50 @@ function card(group, job, pageUrl) {
     snapshot = ''; await render();
   });
   edit.addEventListener('click', () => { rename.hidden = !rename.hidden; if (!rename.hidden) { input.focus(); input.select(); } });
-  const types = [...new Set(group.items.map(item => item.kind === 'hls' ? 'HLS' : format(item)))].join(' / ');
-  const dimensions = media?.width && media?.height ? `${media.width} × ${media.height}` : '尺寸未知';
-  // The badge names the format, so the meta text only shows size facts or, unmatched, the host.
-  const metaBase = media ? dimensions : new URL(group.items[0].url).hostname;
+  // The version picker already names the format; meta only carries size facts or, unmatched, the host.
   const metaLine = element('p', 'meta-line');
-  const meta = element('span', 'video-meta', metaBase);
-  metaLine.append(element('span', 'format-badge', types), meta);
+  const meta = element('span', 'video-meta', desc.metaBase);
+  metaLine.append(meta);
   const sizeWarning = element('p', 'size-warning'); sizeWarning.hidden = true;
   function updateSize(choice) {
-    const { text, warning } = sizeInfo(choice);
-    meta.textContent = text ? `${metaBase} · ${text}` : metaBase;
+    const { text, warning } = desc.sizeFor(choice);
+    meta.textContent = text ? [desc.metaBase, text].filter(Boolean).join(' · ') : desc.metaBase;
     sizeWarning.textContent = warning || ''; sizeWarning.hidden = !warning;
   }
   const actions = element('div', 'card-actions');
-  const choices = options(group);
-  const jobChoice = job?.tabId === tabId && group.items.some(item => item.url === (job.resourceUrl || job.url)) ?
-    JSON.stringify([job.resourceUrl || job.url, job.resourceUrl && job.url !== job.resourceUrl ? job.url : null]) : undefined;
-  const picker = createVersionPicker(choices, selections.get(group.key) || jobChoice,
-    Boolean(busy(job)) || choices.every(choice => choice.item.kind === 'dash'), choice => {
+  const choices = desc.choices;
+  const picker = createVersionPicker(choices, desc.initialValue, desc.pickerDisabled, choice => {
       selections.set(group.key, choice.value);
-      download.disabled = Boolean(busy(job)) || choice.item.kind === 'dash' || unconfirmed;
+      download.disabled = desc.downloadDisabledFor(choice);
       updateThumbnail(choice); updateSize(choice);
     });
   selections.set(group.key, picker.value);
   const download = element('button', 'download');
-  download.dataset.awaitingMatch = String(unconfirmed);
+  download.dataset.awaitingMatch = String(desc.unconfirmed);
   const downloadIcon = element('span', 'download-icon'); downloadIcon.setAttribute('aria-hidden', 'true');
   downloadIcon.innerHTML = '<svg viewBox="0 0 24 24"><path class="download-symbol" d="M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4"/><path class="complete-symbol" d="m5 12 4 4L19 6"/></svg>';
   download.append(downloadIcon, element('span', 'download-label', '下载'));
-  download.disabled = Boolean(busy(job)) || choices.find(choice => choice.value === picker.value)?.item.kind === 'dash' || unconfirmed;
+  download.disabled = desc.downloadDisabledFor(choices.find(choice => choice.value === picker.value));
   download.addEventListener('click', () => {
     const choice = choices.find(choice => choice.value === picker.value);
     void command({ type: 'start', tabId, url: choice.item.url, selectedUrl: choice.selectedUrl });
   });
   function updateThumbnail(choice) {
-    const direct = choice.item.kind === 'file';
-    thumbnail.disabled = !direct && !media;
-    thumbnail.setAttribute('aria-label', direct ? '预览视频' : media ? '定位到网页视频' : '尚未匹配到网页视频');
-    thumbnailHint.textContent = direct ? '预览视频 ▷' : '网页中播放 ↗';
+    const thumb = desc.thumbFor(choice);
+    thumbnail.disabled = !thumb.enabled;
+    thumbnail.setAttribute('aria-label', thumb.label);
+    thumbnailHint.textContent = thumb.hint;
   }
-  updateThumbnail(choices.find(choice => choice.value === picker.value));
-  updateSize(choices.find(choice => choice.value === picker.value));
+  const current = () => choices.find(choice => choice.value === picker.value);
+  updateThumbnail(current()); updateSize(current());
   thumbnail.addEventListener('click', () => {
-    const choice = choices.find(choice => choice.value === picker.value);
-    if (choice.item.kind === 'file') openPreview(group, choice.item, thumbnail);
-    else if (media) void locate(media);
+    const choice = current();
+    const action = desc.thumbFor(choice).action;
+    if (action === 'preview') openPreview(group, choice.item, thumbnail);
+    else if (action === 'locate') void locate(media);
   });
   actions.append(picker.root);
-  const hls = group.items.find(item => item.kind === 'hls' && (!item.inspected || item.inspectionError));
+  const hls = desc.hlsItem;
   if (hls) {
     const read = element('button', 'secondary read-quality', inspecting.has(hls.url) ? '正在读取…' : '读取清晰度');
     read.disabled = inspecting.has(hls.url) || Boolean(busy(job));
@@ -196,20 +147,19 @@ function card(group, job, pageUrl) {
   info.append(titleRow, rename, metaLine, actions, jobMount);
   body.append(thumbnail, info); article.append(body, sizeWarning);
   const technical = element('div', 'technical'); technical.hidden = true;
-  technical.append(element('strong', '', media ? `资源信息${group.items.length > 1 ? ` · ${group.items.length} 个地址` : ''}` : '未确认对应视频'));
+  technical.append(element('strong', '', desc.technical.heading));
   infoToggle.addEventListener('click', () => {
     technical.hidden = !technical.hidden; infoToggle.setAttribute('aria-expanded', String(!technical.hidden));
   });
   for (const item of group.items) {
     technical.append(element('span', 'resource-name', item.name), element('span', 'resource-url', item.url));
   }
-  if (media) {
+  if (desc.technical.canLocate) {
     const location = element('button', 'locate-link', '定位到网页视频');
     location.addEventListener('click', () => locate(media)); technical.append(location);
   }
-  if (!media) technical.append(element('p', '', '无法确认这个资源对应哪个网页视频，请核对后下载。'));
-  const inspectionError = group.items.find(item => item.inspectionError)?.inspectionError;
-  if (inspectionError) article.append(element('p', 'inspection-error', `无法读取清晰度：${inspectionError}`));
+  if (desc.technical.showNote) technical.append(element('p', '', '无法确认这个资源对应哪个网页视频，请核对后下载。'));
+  if (desc.inspectionError) article.append(element('p', 'inspection-error', `无法读取清晰度：${desc.inspectionError}`));
   article.append(technical);
   return article;
 }
@@ -223,35 +173,24 @@ async function openDownload(action, downloadId) {
   }
 }
 
-function nextStep(message) {
-  if (/不是完整视频|只是音轨|初始化片段/.test(message)) return '请重新播放，并选择这个视频的 HLS 主清单；不要单独下载音轨或初始化片段。';
-  if (/独立音轨|暂不支持加密|未加密地址|非 HTTP|必须是 HTTP|DRM|分片结构|直播|MPEG-TS|格式不支持/.test(message)) return '该资源暂不支持。若列表中有直接视频文件，可选择原文件下载。';
-  if (/HTTP \d|过期|登录/.test(message)) return '回到网页重新播放，再选择新发现的资源。';
-  if (/磁盘空间/.test(message)) return '释放磁盘空间后重试；也可选择较低清晰度，减少临时磁盘占用。';
-  if (/限制/.test(message)) return '可尝试较低清晰度，或选择直接视频文件。';
-  return '请检查网络；重新播放视频后可以再次下载。';
-}
-
 function openPreview(group, item, source) {
   closeVersionPickers();
   previewSource = { button: source, url: item.url, media: group.media };
   $('#preview-title').textContent = item.displayName || group.media?.title || item.name;
+  document.querySelector('.preview-subtitle').textContent =
+    `${item.kind === 'image' ? '图片预览' : '原文件预览 · 默认静音'}${group.items.length > 1 ? ` · ${item.name}` : ''}`;
   $('#preview-error').hidden = true; $('#preview-loading').hidden = false;
-  $('#preview-page').hidden = !group.media;
-  $('#preview-video').poster = group.media?.poster || '';
-  $('#preview-video').src = item.url;
-  $('#preview-video').muted = true;
-  $('#preview').showModal();
-  void $('#preview-video').play().catch(() => {});
-}
-
-function downloadProgress(job, nativeDownload) {
-  if (job?.state === 'fetching' && job.total > 0) return { percent: Math.round(job.done / job.total * 100), source: 'segments' };
-  if (job?.kind === 'file' && job.state === 'saving' && nativeDownload) {
-    return nativeDownload.totalBytes > 0 ?
-      { percent: Math.min(100, Math.round(nativeDownload.bytesReceived / nativeDownload.totalBytes * 100)), source: 'bytes' } : { source: 'unknown' };
+  $('#preview-page').hidden = !group.media || group.media.image;
+  const video = $('#preview-video'), image = $('#preview-image');
+  video.hidden = item.kind === 'image'; image.hidden = item.kind !== 'image';
+  if (item.kind === 'image') { image.src = item.url; image.alt = item.name; }
+  else {
+    video.poster = group.media?.poster || '';
+    video.src = item.url;
+    video.muted = true;
+    void video.play().catch(() => {});
   }
-  return {};
+  $('#preview').showModal();
 }
 
 // A running task replaces the button with its status row, so the button only names the next action.
@@ -267,15 +206,6 @@ function render() {
   return task;
 }
 
-function jobForGroup(group, jobs, pageUrl) {
-  const matching = jobs.filter(job => (!job.pageUrl || job.pageUrl === pageUrl) && ownsJob(group, job));
-  return matching.find(busy) || matching.at(-1);
-}
-function bytes(value) {
-  if (!Number.isFinite(value) || value < 0) return '';
-  return value >= 1024 ** 3 ? `${(value / 1024 ** 3).toFixed(2)} GiB` :
-    value >= 1024 ** 2 ? `${(value / 1024 ** 2).toFixed(1)} MiB` : `${(value / 1024).toFixed(1)} KiB`;
-}
 function renderStatus(job, nativeDownload, pageUrl, progressInfo) {
   let node = statusNodes.get(job.id);
   if (!node) {
@@ -328,12 +258,9 @@ async function renderView() {
   const jobs = (data.jobs || []).filter(job => job.tabId === tabId);
   const items = data[`tab:${tabId}`] || [];
   if ($('#preview').open && !items.some(item => item.url === previewSource?.url)) closePreview();
-  const rank = group => {
-    const job = jobForGroup(group, jobs, page.url);
-    return busy(job) ? job.state === 'queued' ? 1 : 0 : 2;
-  };
-  const nextGroups = groupResources(items).sort((a, b) => rank(a) - rank(b));
-  const cardJobs = nextGroups.map(group => jobForGroup(group, jobs, page.url));
+  const model = describePage({ items, players: data[`media:${tabId}`] || [], jobs,
+    pageUrl: page.url, tabId, selectedValues: selections });
+  const cardJobs = model.cards.map(desc => desc.job);
   const nativeDownloads = new Map();
   await Promise.all(jobs.filter(job => job.state === 'saving' && job.kind === 'file' && job.downloadId !== undefined).map(async job => {
     const [download] = await chrome.downloads.search({ id: job.downloadId });
@@ -344,23 +271,19 @@ async function renderView() {
     snapshot = next; closeVersionPickers();
     // Keep status nodes and their cancel listeners while replacing cards.
     for (const node of statusNodes.values()) $('#unmatched-jobs').append(node);
-    groups = nextGroups;
-    cardNodes = groups.map((group, index) => card(group, cardJobs[index], page.url));
-    const matched = groups.filter(group => group.media).length;
-    const unmatched = groups.length - matched;
-    // Fold unmatched resources (often ads or preloads) only when a real page video is listed.
-    const fold = matched > 0 && unmatched > 0;
-    // Running or failed tasks stay visible so progress, errors and the cancel button are never hidden.
-    const folded = index => fold && !groups[index].media && !busy(cardJobs[index]) && cardJobs[index]?.state !== 'failed';
-    $('#resources').replaceChildren(...cardNodes.filter((node, index) => !folded(index)));
-    $('#other-list').replaceChildren(...cardNodes.filter((node, index) => folded(index)));
-    $('#other-resources').open = fold && otherOpen();
-    const foldedCount = groups.filter((group, index) => folded(index)).length;
-    $('#other-resources').hidden = !foldedCount;
-    $('#other-resources summary').textContent = `其他资源 ${foldedCount} 个 · 没有对应到网页上的视频，可能是广告或预加载`;
-    $('#count').textContent = `${matched} 个视频${unmatched ? ` · ${unmatched} 组未匹配资源` : ''}`;
+    // Build first, assign second: a card() throw must not leave groups and
+    // cardNodes pointing at different generations of the same list.
+    const nodes = model.cards.map(desc => card(desc));
+    groups = model.groups;
+    cardNodes = nodes;
+    $('#resources').replaceChildren(...nodes.filter((node, index) => !model.cards[index].folded));
+    $('#other-list').replaceChildren(...nodes.filter((node, index) => model.cards[index].folded));
+    $('#other-resources').open = model.fold && otherOpen();
+    $('#other-resources').hidden = !model.foldedCount;
+    $('#other-resources .other-count').textContent = `其他资源 ${model.foldedCount} 个`;
+    $('#count').textContent = model.countText;
   }
-  renderEmpty(items, data[`media:${tabId}`] || []);
+  renderEmpty(model.empty);
   const otherCount = (data.jobs || []).filter(job => job.tabId !== tabId && busy(job)).length;
   $('#other-job').hidden = !otherCount;
   $('#other-job').textContent = `其他页面还有 ${otherCount} 个任务，可继续下载当前页面的视频。`;
@@ -484,15 +407,14 @@ function updateTaskRow(entry, job, native, pageUrl) {
 }
 
 // Tell "videos exist but have no address yet" apart from "no video on this page".
-function renderEmpty(items, players) {
-  $('#empty').hidden = items.length > 0;
-  if (items.length) return;
-  $('#count').textContent = players.length ? `发现 ${players.length} 个视频` : '0 个视频';
-  $('#empty-title').textContent = players.length ? `网页上有 ${players.length} 个视频，还没找到下载地址` : '这个网页没有找到视频';
-  $('#empty-text').textContent = players.length ? '先播放几秒，这里会出现下载按钮。已经在播放的话，刷新网页后再播放一次。' :
-    '视频还没加载时，刷新网页后再播放。浏览器内部页面无法识别视频。';
-  $('#empty-locate').hidden = !players.length;
-  $('#empty-locate').onclick = () => locate(players[0]);
+function renderEmpty(empty) {
+  $('#empty').hidden = !empty;
+  if (!empty) return;
+  $('#count').textContent = empty.countText;
+  $('#empty-title').textContent = empty.title;
+  $('#empty-text').textContent = empty.text;
+  $('#empty-locate').hidden = !empty.hasPlayers;
+  $('#empty-locate').onclick = () => locate(empty.locate);
 }
 
 async function showMenuNotice() {
@@ -527,6 +449,7 @@ function closePreview() {
   if (!previewSource) return;
   if ($('#preview').open) $('#preview').close();
   const video = $('#preview-video'); video.pause(); video.removeAttribute('src'); video.removeAttribute('poster'); video.load();
+  const image = $('#preview-image'); image.removeAttribute('src'); image.hidden = true; video.hidden = false;
   if (previewSource.button.isConnected) previewSource.button.focus();
   else {
     const index = groups.findIndex(group => group.items.some(item => item.url === previewSource.url));
@@ -542,6 +465,13 @@ $('#preview-video').addEventListener('error', () => {
   if (!$('#preview').open) return;
   $('#preview-loading').hidden = true;
   $('#preview-error').textContent = '无法预览这个文件。地址可能已失效，或浏览器不支持它的编码；可回到网页播放。';
+  $('#preview-error').hidden = false;
+});
+$('#preview-image').addEventListener('load', () => { $('#preview-loading').hidden = true; });
+$('#preview-image').addEventListener('error', () => {
+  if (!$('#preview').open) return;
+  $('#preview-loading').hidden = true;
+  $('#preview-error').textContent = '无法预览这张图片。地址可能已失效。';
   $('#preview-error').hidden = false;
 });
 $('#preview-page').addEventListener('click', () => { if (previewSource?.media) void locate(previewSource.media); });

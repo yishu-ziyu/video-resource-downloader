@@ -23,6 +23,12 @@ execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i
 execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', path.join(fixtures, 'sample.mp4'),
   '-c', 'copy', '-hls_time', '1', '-hls_list_size', '0', path.join(fixtures, 'stream.m3u8')]);
 execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', path.join(fixtures, 'sample.mp4'), '-frames:v', '1', path.join(fixtures, 'poster.jpg')]);
+execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', path.join(fixtures, 'sample.mp4'), '-vn', '-c:a', 'libmp3lame', '-t', '3', path.join(fixtures, 'music.mp3')]);
+execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', path.join(fixtures, 'sample.mp4'), '-frames:v', '1', '-vf', 'scale=640:360', '-q:v', '2', path.join(fixtures, 'photo.jpg')]);
+execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=red:size=16x16', '-frames:v', '1', path.join(fixtures, 'icon.png')]);
+// Images under 30 KiB are treated as icons and filtered; pad the photo above it.
+const photoBytes = await readFile(path.join(fixtures, 'photo.jpg'));
+if (photoBytes.length < 40960) await writeFile(path.join(fixtures, 'photo.jpg'), Buffer.concat([photoBytes, Buffer.alloc(40960 - photoBytes.length)]));
 execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', path.join(fixtures, 'sample.mp4'), '-vf', 'scale=80:46', '-c:v', 'libx264', '-g', '25', '-c:a', 'aac', '-hls_time', '1', '-hls_list_size', '0', path.join(fixtures, 'low.m3u8')]);
 await writeFile(path.join(fixtures, 'old.mp4'), await readFile(path.join(fixtures, 'sample.mp4')));
 execFileSync('ffmpeg', ['-hide_banner','-loglevel','error','-i',path.join(fixtures,'sample.mp4'),'-vf','scale=80:46','-c:v','libx264','-c:a','copy',path.join(fixtures,'new.mp4')]);
@@ -186,6 +192,83 @@ const server = createServer(async (req, res) => {
       res.end(`<title>X 媒体关联模拟</title>
         <article><div data-testid="tweetText">第一条帖子的视频</div><video aria-label="Embedded video" controls poster="https://pbs.twimg.com/ext_tw_video_thumb/1111/pu/img/poster.jpg"></video></article>
         <article><div data-testid="tweetText">第二条帖子的视频</div><video controls poster="https://pbs.twimg.com/ext_tw_video_thumb/2222/pu/img/poster.jpg"></video></article>`);
+    } else if (url.pathname === '/douyin-fixture.html') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      const track = file => `${base}/dy-cdn/sign-${Math.random().toString(16).slice(2)}/6ae4d802/video/tos/cn/tos-cn-vd-0026/${file}${file.includes('?') ? '&' : '?'}mime_type=video_mp4`;
+      const render = encodeURIComponent(JSON.stringify({ app: { videoDetail: {
+        awemeId: '7700117223133711654', desc: '抖音夹具视频 · 访谈节目',
+        video: { duration: 3000, cover: `${base}/poster.jpg`,
+          playAddr: [{ src: track('oAAA111/media-video-avc1/?br=326') }, { src: track('oAAA111/media-video-avc1/?br=326&mirror=1') }],
+          bitRateAudioList: [{ urlList: [{ src: track('oAAA111/media-audio-und-mp4a/?br=53') }] },
+            { urlList: [{ src: track('oBBB222/media-audio-und-mp4a/?br=189') }] }],
+          bitRateList: [{ playAddr: [{ src: track('oCCC333/media-video-avc1/?br=222') }] },
+            { playAddr: [{ src: track('oBBB222/media-video-hvc1/?br=162') }] }] } } } }));
+      res.end(`<title>抖音夹具</title><script id="RENDER_DATA" type="application/json">${render}</script>
+        <video controls src="/sample.mp4"></video>`);
+    } else if (url.pathname.startsWith('/dy-cdn/')) {
+      res.setHeader('Content-Type', 'video/mp4');
+      res.end(await readFile(path.join(fixtures, 'sample.mp4')));
+    } else if (url.pathname === '/bili-fixture.html') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      const sig = () => Math.random().toString(16).slice(2);
+      const m4s = (id, code) => `${base}/bili-cdn/h${sig()}/upgcxcode/23/17/${id}/${id}-1-${code}.m4s?e=${sig()}`;
+      const playinfo = JSON.stringify({ code: 0, data: { dash: { duration: 3,
+        video: [{ id: 80, codecs: 'avc1.640028', bandwidth: 400000, baseUrl: m4s(555000111, 30080),
+            backup_url: [m4s(555000111, 30080), m4s(555000111, 30080)] },
+          { id: 80, codecs: 'hvc1.1.6.L120.90', bandwidth: 300000, baseUrl: m4s(555000111, 30081), backup_url: [] },
+          { id: 32, codecs: 'avc1.64001F', bandwidth: 159043, baseUrl: m4s(555000111, 30032), backup_url: [] }],
+        audio: [{ id: 30216, codecs: 'mp4a.40.2', bandwidth: 65674, baseUrl: m4s(555000111, 30216),
+          backup_url: [m4s(555000111, 30216)] }] } } });
+      res.end(`<title>B站夹具</title>
+        <meta property="og:title" content="B站夹具视频 · 芯片横评"><meta property="og:image" content="${base}/poster.jpg">
+        <script>window.__playinfo__=${playinfo}</script>
+        <video controls src="/sample.mp4"></video>`);
+    } else if (url.pathname.startsWith('/bili-cdn/')) {
+      res.setHeader('Content-Type', 'video/mp4');
+      res.end(await readFile(path.join(fixtures, 'sample.mp4')));
+    } else if (url.pathname === '/xhs-fixture.html') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      const sig = () => Math.random().toString(16).slice(2);
+      const stream = (file, type) => `${base}/xhs-cdn/h${sig()}/stream/79/110/${type}/${file}_${type}.mp4?sign=${sig()}`;
+      const state = JSON.stringify({ note: { noteDetailMap: { note1: { note: {
+        title: '小红书夹具视频 · 收纳技巧', type: 'video', video: { duration: 3,
+          media: { stream: { EF4: [{ masterUrl: stream('0aaa111ccc', 258),
+              backupUrls: [stream('0aaa111ccc', 258), stream('0aaa111ccc', 258)],
+              videoDuration: 3000, height: 720, videoCodec: 'EF4', format: 'mp4' },
+            { masterUrl: stream('0bbb222ddd', 261), backupUrls: [],
+              videoDuration: 3000, height: 1080, videoCodec: 'EF4', format: 'mp4' }],
+            EF5: [], EF6: [], EF7: [] } } },
+        imageList: [{ urlDefault: `${base}/poster.jpg` }] } } } } });
+      // Real pages serialize raw JS: undefined values and constructor calls.
+      res.end(`<title>小红书夹具</title><script>window.__INITIAL_STATE__=${state.slice(0, -1)},"tailMap":new Map([]),"bad":undefined,"x":NaN}</script>
+        <video controls src="/sample.mp4"></video>`);
+    } else if (url.pathname.startsWith('/xhs-cdn/')) {
+      res.setHeader('Content-Type', 'video/mp4');
+      res.end(await readFile(path.join(fixtures, 'sample.mp4')));
+    } else if (url.pathname === '/audio-fixture.html') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.end(`<title>音频夹具</title><audio controls aria-label="夹具音频 · 夜航钢琴" src="/music.mp3"></audio>
+        <script>fetch('/audio-stream')</script>`);
+    } else if (url.pathname === '/audio-stream') {
+      const data = await readFile(path.join(fixtures, 'music.mp3'));
+      res.setHeader('Content-Type', 'audio/mpeg'); res.end(data);
+    } else if (url.pathname === '/image-fixture.html') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.end(`<title>图片夹具</title><img src="/photo.jpg" alt="夹具照片"><img src="/icon.png" alt="小图标"><img src="/photo-stream" alt="无后缀照片">`);
+    } else if (url.pathname === '/photo-stream') {
+      const data = await readFile(path.join(fixtures, 'photo.jpg'));
+      res.setHeader('Content-Type', 'image/jpeg'); res.end(data);
+    } else if (/^\/note-img\d\.jpg$/.test(url.pathname)) {
+      const data = await readFile(path.join(fixtures, 'photo.jpg'));
+      res.setHeader('Content-Type', 'image/jpeg'); res.end(data);
+    } else if (url.pathname === '/xhs-image-fixture.html') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      const state = JSON.stringify({ note: { noteDetailMap: { noteImg: { note: {
+        title: '小红书图文夹具 · 城市漫步', type: 'normal',
+        imageList: [1, 2, 3].map(i => ({ urlDefault: `${base}/note-img${i}.jpg`,
+          urlPre: `${base}/note-img${i}.jpg?size=pre`, infoList: [{ url: `${base}/note-img${i}.jpg?size=hd` }] })) } } } } });
+      res.end(`<title>小红书图文</title><script>window.__INITIAL_STATE__=${state}</script>
+        ${[1, 2, 3].map(i => `<img src="/note-img${i}.jpg">`).join('')}`);
     } else if (url.pathname === '/expired.m3u8') {
       if (requests.filter(value => value === url.pathname).length > 1) { res.writeHead(403); res.end(); }
       else { res.setHeader('Content-Type', 'application/vnd.apple.mpegurl'); res.end(playlist); }
@@ -275,7 +358,7 @@ const server = createServer(async (req, res) => {
     } else {
       const name = path.basename(url.pathname);
       const data = await readFile(path.join(fixtures, name));
-      res.setHeader('Content-Type', name.endsWith('.jpg') ? 'image/jpeg' : name.endsWith('.webm') ? 'video/webm' : name.endsWith('.mp4') ? 'video/mp4' : name.endsWith('.m4s') ? 'video/iso.segment' : name.endsWith('.ts') ? 'video/mp2t' : 'application/vnd.apple.mpegurl');
+      res.setHeader('Content-Type', name.endsWith('.jpg') ? 'image/jpeg' : name.endsWith('.png') ? 'image/png' : name.endsWith('.mp3') ? 'audio/mpeg' : name.endsWith('.webm') ? 'video/webm' : name.endsWith('.mp4') ? 'video/mp4' : name.endsWith('.m4s') ? 'video/iso.segment' : name.endsWith('.ts') ? 'video/mp2t' : 'application/vnd.apple.mpegurl');
       res.end(data);
     }
   } catch { res.writeHead(404); res.end('missing'); }
@@ -340,12 +423,14 @@ try {
     const previous = await worker.evaluate(async () => ((await chrome.storage.session.get('jobs')).jobs || []).map(job => job.id));
     await revealActions(card);
     await card.locator('.download').click();
-    const created = await card.page().waitForFunction(async previous => {
+    // Wait for existence in the panel, then read the added ids from the worker:
+    // the waitForFunction JSHandle's jsonValue is not reliable on this path.
+    await card.page().waitForFunction(async previous => {
       const jobs = (await chrome.storage.session.get('jobs')).jobs || [];
-      const added = jobs.filter(job => !previous.includes(job.id));
-      return added.length ? added.map(job => job.id) : false;
+      return jobs.some(job => !previous.includes(job.id));
     }, previous);
-    const ids = await created.jsonValue();
+    const ids = await worker.evaluate(async previous =>
+      ((await chrome.storage.session.get('jobs')).jobs || []).filter(job => !previous.includes(job.id)).map(job => job.id), previous);
     assert.equal(ids.length, 1, '一次点击必须只创建一个下载任务');
     currentJobId = ids[0];
     return currentJobId;
@@ -699,6 +784,15 @@ try {
     }
     assert.ok(abortedRequests.slice(before).includes('/slow-file.mp4'));
   });
+  // Audio and image downloads skip the MP4 stream validation in downloaded().
+  async function savedFile(jobId = currentJobId, view = panel) {
+    await waitJob('complete', undefined, jobId, view);
+    const job = await getJob(jobId);
+    const item = await worker.evaluate(async id => (await chrome.downloads.search({ id }))[0], job.downloadId);
+    assert.equal(item.state, 'complete');
+    assert.ok(item.filename.startsWith(path.join(artifacts, 'downloads')));
+    return item.filename;
+  }
   async function downloaded(jobId = currentJobId, view = panel) {
     await waitJob('complete', undefined, jobId, view);
     const job = await getJob(jobId);
@@ -1040,6 +1134,172 @@ try {
     assert.equal(job.filename, 'VideoDownloads/first-name.mp4');
     await panel.waitForFunction(async id => ['complete','failed','cancelled'].includes((await chrome.storage.session.get('jobs')).jobs.find(job => job.id === id).state), job.id);
   });
+  await check('抖音页面数据匹配：标题封面绑定播放器，签名变体与音画轨道归同一张卡', async () => {
+    await player.goto(base + '/douyin-fixture.html');
+    const card = panel.locator('#resources article').filter({ hasText: '抖音夹具视频 · 访谈节目' });
+    await card.locator('.thumbnail img').waitFor();
+    assert.match(await card.locator('.thumbnail img').getAttribute('src'), /poster\.jpg/);
+    assert.match(await card.locator('.duration').innerText(), /0:03/);
+    await card.getByRole('button', { name: '资源信息' }).click();
+    assert.equal(await card.locator('.resource-name').count(), 6, '网页地址加去重后的轨道地址');
+    assert.match(await card.locator('.meta-line').innerText(), /×/);
+    assert.match(await card.locator('.version-trigger').innerText(), /MP4/);
+    await card.getByRole('combobox', { name: '下载版本' }).click();
+    assert.equal(await card.getByRole('option', { name: 'MP4 · 视频轨 AVC1 326k', exact: true }).count(), 1);
+    assert.equal(await card.getByRole('option', { name: 'MP4 · 视频轨 AVC1 222k', exact: true }).count(), 1);
+    assert.equal(await card.getByRole('option', { name: 'MP4 · 视频轨 HVC1 162k', exact: true }).count(), 1);
+    assert.equal(await card.getByRole('option', { name: 'MP4 · 音频轨 53k', exact: true }).count(), 1);
+    assert.equal(await card.getByRole('option', { name: 'MP4 · 音频轨 189k', exact: true }).count(), 1);
+    await panel.keyboard.press('Escape');
+    // Same media file under a different signature must land on the same card.
+    await player.evaluate(() => fetch('/dy-cdn/fresh-sig/6ae5ffff/video/tos/cn/tos-cn-vd-0026/oAAA111/media-video-avc1/?br=999'));
+    await card.locator('.resource-name').nth(6).waitFor({ state: 'attached' });
+    assert.equal(await panel.locator('#resources article').count(), 1);
+    // Tracks of a file the page data does not know still group together, marked as unmatched.
+    await player.evaluate(() => Promise.all([
+      fetch('/dy-cdn/sig-x/1/video/tos/cn/tos-cn-ve-15/oZZZ999/media-video-avc1/?br=10'),
+      fetch('/dy-cdn/sig-y/2/video/tos/cn/tos-cn-ve-15/oZZZ999/media-audio-und-mp4a/?br=10')]));
+    const other = panel.locator('#other-list article');
+    await other.locator('.resource-name').nth(1).waitFor({ state: 'attached' });
+    assert.equal(await other.count(), 1);
+    assert.match(await other.locator('.video-title').innerText(), /视频轨 AVC1/);
+    assert.match(await panel.locator('#count').innerText(), /1 个媒体 · 1 组未匹配资源/);
+    await card.getByRole('button', { name: '预览视频' }).click();
+    await panel.waitForFunction(() => document.querySelector('#preview-video').currentTime > 0);
+    assert.match(await panel.locator('#preview-title').innerText(), /抖音夹具视频/);
+    await panel.getByRole('button', { name: '关闭预览' }).click();
+    await chooseVersion(card, 'MP4 · 视频轨 HVC1 162k');
+    await clickDownload(card);
+    const saved = await downloaded();
+    assert.match(path.basename(saved), /^抖音夹具视频 · 访谈节目.*\.mp4$/);
+    await panel.locator('body').screenshot({ path: path.join(artifacts, 'douyin-card.png') });
+  });
+  await check('B站页面数据匹配：playinfo 绑定播放器，镜像去重，轨道可读命名', async () => {
+    await player.goto(base + '/bili-fixture.html');
+    const card = panel.locator('#resources article').filter({ hasText: 'B站夹具视频 · 芯片横评' });
+    await card.locator('.thumbnail img').waitFor();
+    assert.match(await card.locator('.thumbnail img').getAttribute('src'), /poster\.jpg/);
+    assert.match(await card.locator('.duration').innerText(), /0:03/);
+    await card.getByRole('button', { name: '资源信息' }).click();
+    assert.equal(await card.locator('.resource-name').count(), 5, '网页地址加去重后的四条轨道');
+    await card.getByRole('combobox', { name: '下载版本' }).click();
+    assert.equal(await card.getByRole('option', { name: 'MP4 · 视频轨 1080P', exact: true }).count(), 1);
+    assert.equal(await card.getByRole('option', { name: 'MP4 · 视频轨 1080P HEVC', exact: true }).count(), 1);
+    assert.equal(await card.getByRole('option', { name: 'MP4 · 视频轨 480P', exact: true }).count(), 1);
+    assert.equal(await card.getByRole('option', { name: 'MP4 · 音频轨 66k', exact: true }).count(), 1);
+    await panel.keyboard.press('Escape');
+    // Same media id under a different signature must land on the same card
+    // and reuse the page-provided label instead of a duplicate option.
+    await player.evaluate(() => fetch('/bili-cdn/fresh/upgcxcode/99/88/555000111/555000111-1-30032.m4s?e=zzz'));
+    await card.locator('.resource-name').nth(5).waitFor({ state: 'attached' });
+    assert.equal(await panel.locator('#resources article').count(), 1);
+    await card.getByRole('combobox', { name: '下载版本' }).click();
+    assert.equal(await card.getByRole('option', { name: 'MP4 · 视频轨 480P', exact: true }).count(), 1);
+    await panel.keyboard.press('Escape');
+    // A media id the page data does not know groups separately, named by its track code.
+    await player.evaluate(() => Promise.all([
+      fetch('/bili-cdn/a/upgcxcode/1/2/777000999/777000999-1-30032.m4s?e=a'),
+      fetch('/bili-cdn/b/upgcxcode/3/4/777000999/777000999-1-30216.m4s?e=b')]));
+    const other = panel.locator('#other-list article');
+    await other.locator('.resource-name').nth(1).waitFor({ state: 'attached' });
+    assert.equal(await other.count(), 1);
+    assert.match(await other.locator('.video-title').innerText(), /视频轨 480P/);
+    await card.getByRole('button', { name: '预览视频' }).click();
+    await panel.waitForFunction(() => document.querySelector('#preview-video').currentTime > 0);
+    assert.match(await panel.locator('#preview-title').innerText(), /芯片横评/);
+    await panel.getByRole('button', { name: '关闭预览' }).click();
+    await chooseVersion(card, 'MP4 · 视频轨 480P');
+    await clickDownload(card);
+    const saved = await downloaded();
+    assert.match(path.basename(saved), /^B站夹具视频 · 芯片横评.*\.mp4$/);
+  });
+  await check('小红书页面数据匹配：INITIAL_STATE 绑定播放器，多编码流归同一张卡', async () => {
+    await player.goto(base + '/xhs-fixture.html');
+    const card = panel.locator('#resources article').filter({ hasText: '小红书夹具视频 · 收纳技巧' });
+    await card.locator('.thumbnail img').waitFor();
+    assert.match(await card.locator('.thumbnail img').getAttribute('src'), /poster\.jpg/);
+    assert.match(await card.locator('.duration').innerText(), /0:03/);
+    await card.getByRole('button', { name: '资源信息' }).click();
+    assert.equal(await card.locator('.resource-name').count(), 3, '网页地址加去重后的两条流');
+    await card.getByRole('combobox', { name: '下载版本' }).click();
+    assert.equal(await card.getByRole('option', { name: 'MP4 · 720P', exact: true }).count(), 1);
+    assert.equal(await card.getByRole('option', { name: 'MP4 · 1080P', exact: true }).count(), 1);
+    await panel.keyboard.press('Escape');
+    await card.getByRole('button', { name: '预览视频' }).click();
+    await panel.waitForFunction(() => document.querySelector('#preview-video').currentTime > 0);
+    assert.match(await panel.locator('#preview-title').innerText(), /收纳技巧/);
+    await panel.getByRole('button', { name: '关闭预览' }).click();
+    await chooseVersion(card, 'MP4 · 720P');
+    await clickDownload(card);
+    const saved = await downloaded();
+    assert.match(path.basename(saved), /^小红书夹具视频 · 收纳技巧.*\.mp4$/);
+  });
+  await check('音频页面：audio 元素绑定音频文件，可预览并直接下载为 mp3', async () => {
+    await player.goto(base + '/audio-fixture.html');
+    const card = panel.locator('#resources article').filter({ hasText: '夹具音频 · 夜航钢琴' });
+    await card.locator('.duration').waitFor({ state: 'attached' });
+    assert.match(await card.locator('.duration').innerText(), /^0:0\d$/);
+    await card.getByRole('button', { name: '资源信息' }).click();
+    assert.equal(await card.locator('.resource-name').count(), 1);
+    assert.doesNotMatch(await card.locator('.meta-line').innerText(), /尺寸未知/);
+    assert.match(await card.locator('.version-trigger').innerText(), /MP3/);
+    // A bare audio/* response with no suffix is caught by MIME and lands in 其他资源.
+    const other = panel.locator('#other-list article');
+    await other.locator('.resource-name').filter({ hasText: 'audio-stream' }).waitFor({ state: 'attached' });
+    assert.equal(await other.count(), 1);
+    await card.getByRole('button', { name: '预览视频' }).click();
+    await panel.waitForFunction(() => document.querySelector('#preview-video').currentTime > 0);
+    await panel.getByRole('button', { name: '关闭预览' }).click();
+    await clickDownload(card);
+    const file = await savedFile();
+    assert.match(path.basename(file), /^夹具音频 · 夜航钢琴.*\.mp3$/);
+    assert.deepEqual(await readFile(file), await readFile(path.join(fixtures, 'music.mp3')));
+  });
+  await check('图片页面：大图可预览下载，图标级小图被过滤', async () => {
+    await player.goto(base + '/image-fixture.html');
+    // No player on the page, so the images list directly instead of folding away.
+    const cards = panel.locator('#resources article');
+    await cards.locator('.resource-name').filter({ hasText: 'photo-stream' }).waitFor({ state: 'attached' });
+    assert.equal(await cards.count(), 2, 'photo.jpg 与 photo-stream 各成一组，icon.png 被过滤');
+    const photo = cards.filter({ hasText: 'photo.jpg' });
+    const stream = cards.filter({ hasText: 'photo-stream' });
+    await photo.locator('.thumbnail img').waitFor();
+    assert.match(await photo.locator('.version-trigger').innerText(), /JPG/);
+    assert.match(await stream.locator('.version-trigger').innerText(), /JPG/);
+    await photo.getByRole('button', { name: '预览视频' }).click();
+    await panel.waitForFunction(() => !document.querySelector('#preview-image').hidden &&
+      document.querySelector('#preview-image').naturalWidth > 0);
+    assert.ok(await panel.evaluate(() => document.querySelector('#preview-video').hidden));
+    assert.match(await panel.locator('#preview-title').innerText(), /photo\.jpg/);
+    await panel.getByRole('button', { name: '关闭预览' }).click();
+    await clickDownload(stream);
+    const file = await savedFile();
+    assert.match(path.basename(file), /photo-stream( \(\d+\))?\.jpg$/);
+    assert.deepEqual(await readFile(file), await readFile(path.join(fixtures, 'photo.jpg')));
+  });
+  await check('小红书图文笔记：imageList 合成图片卡，每图可预览并按图命名', async () => {
+    await player.goto(base + '/xhs-image-fixture.html');
+    const card = panel.locator('#resources article').filter({ hasText: '小红书图文夹具 · 城市漫步' });
+    await card.locator('.thumbnail img').waitFor();
+    assert.match(await card.locator('.thumbnail img').getAttribute('src'), /note-img1\.jpg/);
+    assert.match(await card.locator('.meta-line').innerText(), /3 张图/);
+    await card.getByRole('button', { name: '资源信息' }).click();
+    assert.equal(await card.locator('.resource-name').count(), 9, '三张图各三个变体地址全部归组');
+    await card.getByRole('combobox', { name: '下载版本' }).click();
+    for (const n of [1, 2, 3])
+      assert.equal(await card.getByRole('option', { name: `JPG · 图片 ${n}`, exact: true }).count(), 1);
+    await panel.keyboard.press('Escape');
+    await card.getByRole('button', { name: '预览视频' }).click();
+    await panel.waitForFunction(() => !document.querySelector('#preview-image').hidden &&
+      document.querySelector('#preview-image').naturalWidth > 0);
+    assert.match(await panel.locator('#preview-title').innerText(), /城市漫步/);
+    assert.match(await panel.locator('.preview-subtitle').innerText(), /图片预览 · 图片 1/);
+    await panel.getByRole('button', { name: '关闭预览' }).click();
+    await chooseVersion(card, 'JPG · 图片 2');
+    await clickDownload(card);
+    const file = await savedFile();
+    assert.match(path.basename(file), /图片 2( \(\d+\))?\.jpg$/);
+  });
   await check('站内切页：只列出新视频，丢弃旧请求迟到响应，下载新文件并支持后退', async () => {
     await player.goto(base + '/spa.html');
     await row('old.mp4').waitFor();
@@ -1227,6 +1487,32 @@ try {
     await assertTsOutput(await clickDownload(card));
     assert.ok(refererRequests.slice(before).some(request => request.path.endsWith('/redirected-stream.m3u8') && request.status === 200));
     assert.ok(refererRequests.slice(before).every(request => request.referer === base + '/'));
+    await waitRulesEmpty();
+    await player.goto(base); await panel.reload();
+  });
+  await check('Referer：直接文件的校验与浏览器下载同样保留网页来源', async () => {
+    await player.goto(base); await panel.reload();
+    const url = base + '/referer-file/old.mp4';
+    const before = refererRequests.length;
+    const status = await player.evaluate(url => fetch(url, { referrerPolicy: 'origin' }).then(response => response.status), url);
+    assert.equal(status, 200, '正常网页请求必须携带自己的来源');
+    // Unmatched by the page player: lands in the folded 其他资源 section.
+    const card = panel.locator('#other-list article').filter({ hasText: 'old.mp4' });
+    await card.waitFor();
+    const file = await savedFile(await clickDownload(card)).catch(async e => {
+      console.log('DBG jobs:', await worker.evaluate(async () => ((await chrome.storage.session.get('jobs')).jobs || []).map(j => [j.state, j.message, j.viaFetch])));
+      throw e;
+    });
+    const original = await readFile(path.join(fixtures, 'old.mp4'));
+    assert.deepEqual(await readFile(file), original, '下载文件必须与源文件逐字节一致');
+    const observed = refererRequests.slice(before).filter(request => request.path === '/referer-file/old.mp4');
+    assert.ok(observed.some(request => request.status === 412), '应先观察到浏览器下载被服务器拒绝，再回退');
+    assert.ok(observed.filter(request => request.status === 200).length >= 3, '校验与来源下载请求都应成功');
+    assert.ok(observed.every(request => request.status !== 200 || request.referer === base + '/'),
+      '校验和来源下载都必须携带网页来源：' + JSON.stringify(observed));
+    // The rejected browser attempt must be erased, not left as a failed entry.
+    const entries = await worker.evaluate(async () => (await chrome.downloads.search({})).map(d => d.state));
+    assert.deepEqual(entries.filter(state => state === 'interrupted'), [], '被拒绝的下载尝试不能残留在下载列表：' + JSON.stringify(entries));
     await waitRulesEmpty();
     await player.goto(base); await panel.reload();
   });

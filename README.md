@@ -1,4 +1,4 @@
-# 视频资源下载器 · 0.12.0
+# 视频资源下载器 · 0.16.2
 
 Chrome / Edge 的 Manifest V3 插件。它识别播放器的资源请求，不录屏，不上传视频或浏览记录。不需要 CoApp 或其他本地辅助程序。
 
@@ -37,7 +37,7 @@ HLS 限制：最多同时处理 3 个任务，更多任务排队；每任务最�
 
 - 只下载你拥有保存权利的内容。插件不破解 DRM，不绕过登录或付费权限。当前版本连普通 AES-128 HLS 加密也不处理。
 - 不读取、复制或保存 Cookie；浏览器按自身规则决定是否随下载 / HLS 请求发送已有 Cookie。
-- 不复制播放器的 Cookie、Authorization 或其他私有请求头。HLS 请求使用实际视频页面的域名来源（Referer，只发送 origin + /，不包含页面路径或参数）。只对本插件发起的单个 HTTP(S) 媒体请求临时设置，收到响应头后清理；不改普通网页请求、Origin 或浏览器鉴权信息。不向 HTTP 地址泄露 HTTPS 来源。依赖其他私有请求信息的网站仍可能失败。
+- 不复制播放器的 Cookie、Authorization 或其他私有请求头。HLS 请求，以及浏览器直连下载被服务器拒绝后的回退抓取，都使用实际视频页面的域名来源（Referer，只发送 origin + /，不包含页面路径或参数）。只对本插件发起的单个 HTTP(S) 媒体请求临时设置，收到响应头后清理；不改普通网页请求、Origin 或浏览器鉴权信息。不向 HTTP 地址泄露 HTTPS 来源。依赖其他私有请求信息的网站仍可能失败。
 - TS 下载数据及转换中的 MP4 临时存放在本插件专用的浏览器私有磁盘目录。完成、失败或取消时删除；浏览器退出、插件重载或意外中止后，下一次 HLS 处理页面启动时清理遗留数据。不提供断点恢复。
 - 资源 URL、网页视频标题、封面地址、视频元数据、所有活动任务和最近 100 项结束任务只保存在 `chrome.storage.session`，不写入持久存储。URL 可能包含临时访问令牌；不要把它们发给其他人。
 - 无分析服务、遥测、远程代码或视频上传。网络访问只有目标视频 / 清单 / 片段、网页视频的封面，以及网页原有请求。
@@ -80,12 +80,16 @@ npm test
 
 ## 结构与官方参考
 
-- `extension/background.js`：网络识别、每标签页资源列表、下载状态和下载管理器。
-- `extension/content.js`：采集网页视频地址、标题、封面和元数据；定位原视频。
+- `extension/media-taxonomy.js`：媒体分类与身份的唯一归属（kind 判定、轨道身份、命名、后缀、格式、直连判定、站点身份）；被后台、弹窗、资源归组和内容脚本共用。
+- `extension/background.js`：下载任务引擎——任务存储、MP4 校验、HLS/离屏调度、浏览器下载、取消/失败/对账。
+- `extension/catalog.js`：页面目录——标签页注册与 epoch、资源记录、播放器元数据、导航清理、名称升级；与任务引擎共用同一串行存储队列。
+- `extension/content.js`：站点适配器注册表（产出统一的 {title, poster, duration, urls, names, imageNote}）；扫描视频/音频元素、绑定页面数据、定位原视频；新增站点只需加一个适配器，需要主世界数据时再加一条 manifest 脚本。
+- `extension/page-state.js`：MAIN world 中继（仅小红书域），读取 hydrate 后的 `__INITIAL_STATE__` 并发回隔离世界。
 - `extension/resources.js`：按直接地址、清单关系和 X 媒体 ID 关联、归组资源。
 - `extension/hls.js`、`offscreen.js`：清单检查、片段下载、TS 流式写盘、TS 转 MP4 和临时文件清理。
 - `src/mp4.js`：Mediabunny 封装入口（fMP4 合并、TS 转 MP4），由 `npm run build` 打包到 `extension/vendor/mp4.js`。
-- `extension/popup.*`：视频卡片、原文件预览、真实下载反馈、错误及取消。
+- `extension/card-model.js`：弹窗视图模型——卡片/页面/空态的全部展示决策（选项、折叠、缩略图行为、尺寸与进度文本、下载可用性、失败建议）。
+- `extension/popup.*`：按视图模型渲染 DOM、事件接线、原文件预览、任务状态。
 - `extension/version-picker.js`：真实版本列表、选中状态与键盘操作；使用浏览器原生 popover。
 - `tests/e2e.mjs`：真实扩展端到端验收。
 
@@ -263,3 +267,61 @@ CHECK_FILTER='真实 CDN 素材' TEST_ARTIFACTS='artifacts/cdn-browser-0.4.0' np
 - 证据：`artifacts/compact-0.12.0/report.json`、`video-cards.png`、`concurrent-light.png`、`concurrent-dark.png`、`failed-403.png`、`open-actions.png`、`workspace-light.png`、`workspace-dark.png`、`workspace-failed.png`。
 - 本节取代前面 0.3.0、0.8.0、0.11.0 中关于「下载按钮显示进度」和「三格任务总览」的描述。
 - 未验证：日常 Chrome / Edge 中的实际观感；真实网站上长标题和长报错的显示；手动点击时进度刷新与按钮点击的竞争（自动化点击会自动重试，测不出这类问题，所以改为原地更新来避免）。
+
+## 抖音识别与预览修复 · 0.13.0
+
+目标：抖音网页版用 MSE 播放，视频元素只有 blob: 地址，资源列表过去全是「未匹配视频」，预览也因扩展来源被 CDN 拒绝。
+
+- 读取页面 `#RENDER_DATA` 中各视频的已签名媒体地址（`playAddr`、`bitRateList`、`bitRateAudioList`）。只按视频时长把页面数据绑定到唯一对应的 `<video>` 元素，避免把相邻预加载视频的标题张冠李戴；绑定的视频获得真实标题、封面和码率地址。
+- 抖音 CDN 路径 `/video/tos/…/{文件}/{media-视频轨|音频轨}/` 中的文件段与页面数据一致，即使主机、签名和查询参数不同也按文件归组。同一视频的已抓取流并入同一张卡片；没有页面数据的流仍明确标注未匹配。
+- 轨道地址显示为「视频轨 AVC1」「音频轨」等真实含义，不再一律叫「video」。同一轨道的多个镜像地址只保留一个下载选项，视频轨排在音频轨之前，未匹配卡片的标题也优先取视频轨名称。注意：单独下载视频轨得到的是无声文件，单独下载音频轨只有声音；音画合并暂不支持。
+- 弹窗改为 `no-referrer`：抖音等 CDN 拒绝 `chrome-extension://` 来源（实测 403），不带来源时可正常播放（实测 206），预览和封面因此可用。
+- 行为验收（端到端）：抖音夹具中时长绑定播放器、标题/封面/码率归组到一张卡；同文件不同签名地址并入同卡；未知文件的音画轨按文件归组并标注未匹配；预览实际播放；轨道名称可读。
+- 未验证：抖音登录态、`/video/` 详情页与搜索结果页的 RENDER_DATA 结构差异；Feed 内多 aweme 全部出现在页面数据时的绑定覆盖度；下载弹窗内预览对其它要求页面来源的站点的影响。
+- 更新后在扩展管理页重新加载插件，再刷新视频网页。
+
+## B 站与小红书适配 · 0.14.0
+
+- B 站解析内嵌脚本里的 `window.__playinfo__`：DASH 视频轨/音频轨（含 `baseUrl`/`base_url`/`backup_url`/`backupUrl`）与回退 `durl` 全部提取，按时长绑定播放器；标题与封面取 OpenGraph。`/upgcxcode/` 的 `.m4s` 是完整轨道文件而非 HLS 片段，按文件下载并保存为 `.mp4`；轨道按 playinfo 的 `id`/`codecs`/`bandwidth` 命名为「视频轨 1080P」「音频轨 66k」等，URL 编码号本身推不出画质所以名称随页面数据下发。
+- 小红书的 `window.__INITIAL_STATE__` 是 JS 字面量（含 `undefined`、`new Map([])`），且 `noteDetailMap` 在脚本里是空对象、由页面 hydrate 后填充——脚本文本解析拿不到。新增 `page-state.js`（`world: "MAIN"`，仅 xiaohongshu.com）轮询读取运行态并把精简 note 数据 `postMessage` 回隔离世界；隔离世界也保留脚本文本解析作为兜底。
+- 小红书流键为 `EF4`/`EF5` 等混淆名而非编码名：`EF4` 是含音频的完整 mp4，`EF5` 是播放器实际拉取的 fMP4 `.m4s` 轨，两类地址都收集用于匹配；标签用 `height`（720P/1080P…），`videoCodec` 仅在是真实编码名（h264/h265/av1）时附加。`.m4s` 同样保存为 `.mp4`。
+- 去重规则改为「同 kind 同标签折叠」：无法区分彼此的同名选项只保留排序最优的一个（完整 `.mp4` 优先于 `.m4s`、文件优先、视频优先于音频）；不同标签（不同码率/画质）仍可分别选择。抖音轨道名加入 `br=` 码率后缀（如「视频轨 AVC1 326k」），同编码不同码率不再显示两个相同标签。
+- 真实验证（ego-lite 装未打包扩展）：真实小红书视频笔记弹出 1 张卡（真标题、0:51、3616×2160、真封面），5 个画质选项；预览实际播放（readyState 4）；选 720P 下载得到 `VideoDownloads/标题.mp4`（ISO MP4，校验通过）。真实 B 站页早前验证 9 个可读选项绑定成功。
+- 未验证：小红书其它 note 形态（直播、多图视频、登录墙降级状态）的 `noteDetailMap` 结构差异；EF5 `.m4s` 轨在少数播放器上的兼容性（fMP4 封装）；B 站番剧/直播等非 playinfo 页面。
+
+## 音频与图片下载 · 0.15.0
+
+- 新增 `audio`/`image` 资源类型：按扩展名或 `audio/*`、`image/*` MIME 识别，与直接文件共用浏览器下载（不走 HLS 管线、不做 MP4 校验）。音频扩展名 mp3/m4a/wav/ogg/oga/flac/opus/weba/aac（MIME 兜底），图片 jpg/jpeg/png/gif/webp/avif/bmp/svg/ico。
+- 小于 30 KiB 且已知大小的图片被当作图标、头像或追踪像素过滤；大小未知的图片保留。
+- 内容脚本同时扫描 `<audio>` 元素：音频播放器与视频同规则注册、绑定、定位；无 `videoWidth`，卡片不显示尺寸行。
+- 抖音 `aweme.images[]` 与小红书 `note.imageList` 生成「图文」合成播放器：以笔记标题、封面（第一张图）建卡，`page-state.js` 同步携带 `imageList` 的 `urlDefault`/`urlPre`/`infoList[].url` 变体；同图多变体地址按「图片 N」命名并折叠为一个选项。
+- 图文卡片的 meta 显示「N 张图」；每张图下载为「笔记标题-图片 N.后缀」。图片缩略图直接取资源地址；预览框按 kind 分派 `<video>`/`<img>`，图片预览有独立加载与失败提示。
+- 排序 `file > hls/dash > audio > image`：同组里完整视频仍是默认选项；音频卡片的 meta 只显示大小，不再显示「尺寸未知」。
+- 修复两处渲染缺陷：卡片标题变量提前到缩略图块之前（图片卡曾因 TDZ 抛错并使 `groups`/`cardNodes` 错位、后续渲染整体失败）；卡片节点数组改为先构建后赋值，单个卡片异常不再拖垮整列。
+- e2e 新增三例：`<audio>` 绑定 + 无后缀 `audio/*` MIME 识别 + mp3 落盘字节一致；图片页大图可预览下载、icon 级小图被过滤；小红书图文三图九地址归组、逐图预览、按「图片 N」命名落盘。
+- 真实验证（ego-lite 装未打包扩展）：真实小红书图文笔记弹出 1 张图卡（真标题、9 张图、9 个「图片 N」选项），`<img>` 预览加载出 1080×1507 实图；下载「图片 3」后 Chrome 按真实内容保存为 `.webp`（MIME 修正后缀生效）。真实 MP3 直链页（Chrome 内置播放器为 `<video>` 元素）识别为 `audio` 卡（`MP3 · 原文件`、无尺寸行），预览可播放，下载得到 9.3MB 有效 MP3（ID3v2.3，192kbps）。
+- 未验证：抖音图文笔记（`urlList` 形态）；小红书登录态 `imageList` 字段差异；未被网络请求观察到的图片地址保存为 `.jpg` 兜底后缀（真实 MIME 未知时）。
+
+## 架构整理 · 0.16.0
+
+本轮不改用户可见行为，只把同一职责收敛到单一模块。依据架构调研报告（`/private/tmp/architecture-review-2026-10-30-1440.html`）按优先级落地四个候选。
+
+- `media-taxonomy.js`（新）：媒体知识中枢。此前 `.m4s→MP4`、抖音轨道身份正则、扩展名清单分别重复在 background/popup/resources/content 三处以上且已轻微分歧；现统一为 `kindOf`/`assetKey`/`mediaKey`/`resourceName`/`suffixFor`/`format`/`isAudioItem`/`isXPost`/`isDirect`/`mimeHintOf`。四个消费方改从 `globalThis.VDR_TAXONOMY` 读取（manifest 保证加载顺序）。
+- `content.js` 站点适配器：`awemes`/`biliMedia`/`xhsMedia` 注册为 `{name, extract, relay}` 条目，`siteMedia()` 逐个独立执行并捕获单适配器异常；`relay` 字段把 postMessage 类型映射到适配器，`scan()` 不再知道站点名。加一个站点 = 加一个适配器条目（需要主世界数据时再加一条 manifest 脚本），不再改动扫描逻辑。
+- `catalog.js`（新）：background.js 中页面目录职责整体迁出——标签页注册/epoch、资源记录、播放器元数据、导航清理、fallback 名称升级。原 `remember`/`recordMedia` 里近乎逐行重复的 pageNames 升级块合并为一处；webRequest 三个监听器一并迁入。`background.js` 保留任务引擎：任务存储、校验、HLS/离屏调度、取消/失败/对账。两侧共享同一 `mutate` 串行队列。
+- `card-model.js`（新）：popup 展示决策整体迁出——`describeCard()`/`describePage()` 返回卡片、折叠、空态、选项、尺寸/进度文本、缩略图行为、下载可用性与失败建议的描述对象；`popup.js` 只做「描述 → DOM」与事件接线。卡片节点先构建后赋值的防错位约定保留。
+- 规模变化：background.js 492→272、popup.js 591→487、resources.js 101→72；新增 taxonomy 147、catalog 178、card-model 134；content.js 288→303（注册表+relay）。总行数下降主要来自重复规则合并。
+- 验收：全量 65 项端到端回归通过。行为不变是验收标准，因此没有新增用例；测试中 `clickDownload` 辅助函数存在快照/轮询竞态，曾两次在全量运行中间歇失败（单跑与复跑均通过），已加失败时诊断输出便于后续观察。
+- 未做：协议常量层（原报告候选 5，Speculative）——前四项落地后未剩下值得单独抽出的接缝。
+
+## 直连下载来源回退 · 0.16.2
+
+修复真实 B 站音频/视频轨下载 `SERVER_FORBIDDEN`：B 站 CDN 校验 Referer，而 `chrome.downloads` 请求不携带页面 Referer（DNR 对下载请求不生效，实测 initiator 为扩展自身）。
+
+- 直连下载被服务器以 `SERVER_*` 错误中断后，自动改走离屏 `sourceFetch`：复用来源租约机制（`acquireSource` 的 DNR 规则临时为单个请求补 Referer=页面 origin），流式写入离屏临时文件，完成后经正常 blob 保存路径落盘。取消、失败、完成均清理临时文件与来源规则。
+- 回退只尝试一次；回退本身失败仍按原路径报错，不产生残缺文件。
+- 被拒绝的首次尝试会从浏览器下载列表中擦除（含残留分片文件），只保留最终成功的条目，避免任务进行中却显示「无法从网站上提取文件」的假象（0.16.2）。
+- OPFS `getFile()` 返回的 File 不带 MIME 类型，Chrome 会按 `text/plain` 把 `.mp4` 纠正成 `.txt`；落盘前显式包装为 `application/octet-stream`（无首选扩展名映射，不改写后缀）。
+- e2e 新增用例：校验与下载请求均带页面 Referer、浏览器首次尝试被 412 拒绝、回退后字节一致落盘、来源规则用完即清。全量 64 项通过。
+- 真实验证（ego-lite）：真实 B 站页面选「MP4 · 音频轨」，浏览器下载被拒后经 `viaFetch` 回退完成，落盘 `video/mp4` 内容有效的 `.mp4`。
+- 已知边界：未绑定页面标题的资源组（如部分备用轨道）下载名回退为轨道标签（如 `视频轨.mp4`）而非视频标题。

@@ -1,10 +1,9 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>视频资源下载器</title><link rel="stylesheet" href="popup.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>视频资源下载器</title><link rel="stylesheet" href="popup.css"></head>
 <body>
   <header>
     <div class="brand"><img class="brand-icon" src="icons/icon-48.png" alt="" width="40" height="40"><div><h1>视频资源下载器</h1><p id="page-name">当前网页</p></div></div>
-    <span class="local-tag">本地处理</span>
   </header>
   <main>
     <div class="section-heading"><h2>当前页面 <span id="count">0</span></h2><button id="workspace-open" class="workspace-open">展开下载面板 ↗</button></div>
@@ -13,7 +12,7 @@
     <p id="menu-notice" class="notice" role="status" hidden></p>
     <p id="other-job" class="notice" hidden></p>
     <div id="resources"></div>
-    <details id="other-resources" class="other-resources" hidden><summary></summary><div id="other-list"></div></details>
+    <details id="other-resources" class="other-resources" hidden><summary><span class="other-count"></span><span class="other-note"> · 没有对应到网页上的视频，可能是广告或预加载</span></summary><div id="other-list"></div></details>
     <div id="empty" hidden><span class="empty-icon" aria-hidden="true">▷</span><strong id="empty-title"></strong><p id="empty-text"></p>
       <div class="empty-actions"><button id="empty-locate" hidden>定位到视频</button><button id="empty-reload" class="secondary">↻ 刷新网页</button></div></div>
     <div id="unmatched-jobs" class="job-list"></div>
@@ -24,11 +23,19 @@
     </section>
     <template id="job-template"><section class="status" aria-live="polite"><strong class="job-title"></strong><p class="job-message"></p><progress class="job-progress" aria-label="下载进度" hidden></progress><p class="job-metrics" hidden></p><button class="cancel secondary" aria-label="取消" title="取消" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button><div class="file-actions" hidden><button class="open-file">打开</button><button class="show-file secondary" aria-label="在文件夹中显示" title="在文件夹中显示"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button><button class="more-actions secondary" aria-label="更多操作" title="再次下载或换一个版本"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg></button></div><p class="next-step" hidden></p></section></template>
   </main>
-  <footer><button id="downloads" class="footer-button">浏览器下载记录 <span aria-hidden="true">↗</span></button><details id="help"><summary>使用说明</summary><p>仅下载你有权保存的内容。直接文件不转码；HLS 转为 MP4，不重新编码；MP4 不能原样容纳的编码保留原始 TS。默认最高码率，最多同时处理 3 个 HLS 任务，更多任务自动排队。TS 使用临时磁盘；fMP4 音画输入合计最大 256 MiB。暂不支持 DRM、直播、DASH 或 MPEG-TS 独立音轨合并。文件保存在 VideoDownloads 文件夹。</p></details></footer>
+  <footer><div class="footer-meta"><button id="downloads" class="footer-button">浏览器下载记录 <span aria-hidden="true">↗</span></button><span>本地处理</span></div><details id="help"><summary>使用说明</summary><ul class="help-list">
+      <li>点卡片封面可以先预览，确认内容再下载。</li>
+      <li>「视频轨」只有画面没有声音，「音频轨」只有声音——需要完整视频时两个都要下载。</li>
+      <li>默认下载最高画质；HLS（m3u8）自动转成 MP4，不重新压缩，装不下的片段会保留原始 TS。</li>
+      <li>HLS 同时最多下载 3 个，其余的自动排队。</li>
+      <li>加密视频（DRM）、直播、DASH 暂时不能下载。</li>
+      <li>文件保存在「下载 → VideoDownloads」文件夹。请只下载你有权保存的内容。</li>
+    </ul></details></footer>
   <dialog id="preview" aria-labelledby="preview-title">
     <div class="preview-header"><div><h2 id="preview-title"></h2><p class="preview-subtitle">原文件预览 · 默认静音</p></div><button id="preview-close" class="icon-button" aria-label="关闭预览">×</button></div>
     <video id="preview-video" controls muted playsinline preload="metadata"></video>
-    <p id="preview-loading" class="preview-hint">正在加载视频…</p>
+    <img id="preview-image" alt="" hidden>
+    <p id="preview-loading" class="preview-hint">正在加载…</p>
     <p id="preview-error" role="alert" hidden></p>
     <button id="preview-page" class="secondary" hidden>回到网页视频 ↗</button>
   </dialog>

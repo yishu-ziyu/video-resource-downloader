@@ -26,7 +26,8 @@ function ready() {
   })();
   return initialized;
 }
-export async function acquireSource(url, pageUrl) {
+// allTypes also covers browser downloads, whose resource type is not xmlhttprequest.
+export async function acquireSource(url, pageUrl, { allTypes = false } = {}) {
   const target = new URL(url), page = new URL(pageUrl);
   if (![target, page].every(value => ['http:', 'https:'].includes(value.protocol))) throw new Error('视频来源必须是 HTTP 网页。');
   if (page.protocol === 'https:' && target.protocol === 'http:') throw new Error('不会向未加密地址发送 HTTPS 网页来源。');
@@ -48,7 +49,7 @@ export async function acquireSource(url, pageUrl) {
       await chrome.storage.session.set({ sourceRuleNext: nextRule });
       await chrome.declarativeNetRequest.updateSessionRules({ addRules: [{ id, priority: 1,
         action: { type: 'modifyHeaders', requestHeaders: [{ header: 'Referer', operation: 'set', value: page.origin + '/' }] },
-        condition: { regexFilter, isUrlFilterCaseSensitive: true, initiatorDomains: [chrome.runtime.id], resourceTypes: ['xmlhttprequest'] },
+        condition: { regexFilter, isUrlFilterCaseSensitive: true, initiatorDomains: [chrome.runtime.id], ...(allTypes ? {} : { resourceTypes: ['xmlhttprequest'] }) },
       }] });
       return id;
     });
@@ -58,7 +59,9 @@ export async function acquireSource(url, pageUrl) {
 }
 export async function releaseSource(id) {
   const lease = leases.get(id);
-  if (!lease) return;
+  // The lease map is in-memory; after a worker restart only the rule id survives
+  // on the job, so still try to remove the session rule.
+  if (!lease) { await change(() => chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [id] })).catch(() => {}); return; }
   for (let attempt = 0; ; attempt++) {
     try { await change(() => chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [id] })); break; }
     catch {

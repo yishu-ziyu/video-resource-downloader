@@ -4,3 +4,4 @@ artifacts/
 
 # Generated release packages
 video-resource-downloader-*.zip
+.serena/

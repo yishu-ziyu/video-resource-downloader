@@ -1,4 +1,5 @@
 import { downloadHls } from './hls.js';
+import { sourceFetch } from './source-fetch.js';
 const tasks = new Map();
 const pending = new Map();
 const MAX_CONCURRENT_HLS = 3;
@@ -36,12 +37,43 @@ async function release(id) {
 }
 const send = message => chrome.runtime.sendMessage(message);
 
+// Browser downloads cannot carry the page Referer (DNR does not reach
+// chrome.downloads). Fetch the file with the leased page source, then let the
+// background save the resulting blob through the normal download path.
+async function fetchDirect(job, controller, progress) {
+  const response = await sourceFetch(job.url, { signal: controller.signal }, { jobId: job.id, pageUrl: job.pageUrl });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const file = await createFile(job.id, '.part');
+  try {
+    const total = Number(response.headers.get('content-length')) || 0;
+    let done = 0;
+    const reader = response.body.getReader();
+    for (;;) {
+      const { value, done: finished } = await reader.read();
+      if (finished) break;
+      controller.signal.throwIfAborted();
+      await file.writer.write(value);
+      progress(done += value.byteLength, total, 'fetching', done);
+    }
+    await file.writer.close();
+    file.writer = null;
+    // OPFS files carry no MIME type; Chrome would read the empty type as
+    // text/plain and "correct" the suggested extension to .txt. An explicit
+    // octet-stream type has no preferred extension, so the filename stays.
+    const raw = await file.handle.getFile();
+    return raw.slice(0, raw.size, 'application/octet-stream');
+  } catch (error) { await file.remove().catch(() => {}); throw error; }
+}
+
 async function run(job, controller) {
   try {
-    await send({ type: 'progress', id: job.id, done: 0, total: 0, phase: 'inspecting' });
+    await send({ type: 'progress', id: job.id, done: 0, total: 0, phase: job.viaFetch ? 'fetching' : 'inspecting' });
     controller.signal.throwIfAborted();
-    const { blob, note } = await downloadHls(job.url, controller.signal, (done, total, phase, bytes) =>
-      send({ type: 'progress', id: job.id, done, total, phase, bytes }), { jobId: job.id, pageUrl: job.pageUrl, audioUrl: job.audioUrl, requireAudio: job.requireAudio, createFile: extension => createFile(job.id, extension) });
+    const { blob, note } = job.viaFetch
+      ? { blob: await fetchDirect(job, controller, (done, total, phase, bytes) =>
+          send({ type: 'progress', id: job.id, done, total, phase, bytes })) }
+      : await downloadHls(job.url, controller.signal, (done, total, phase, bytes) =>
+          send({ type: 'progress', id: job.id, done, total, phase, bytes }), { jobId: job.id, pageUrl: job.pageUrl, audioUrl: job.audioUrl, requireAudio: job.requireAudio, createFile: extension => createFile(job.id, extension) });
     controller.signal.throwIfAborted();
     const url = URL.createObjectURL(blob);
     blobs.set(job.id, url);

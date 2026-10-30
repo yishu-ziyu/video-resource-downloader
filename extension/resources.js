@@ -1,16 +1,7 @@
 // Only group resources when a concrete relationship is known.
-export function isXPost(value) {
-  return /^https?:\/\/(?:www\.)?(?:x|twitter)\.com\/[^/]+\/status\/\d+/.test(value);
-}
-
-export function assetKey(value) {
-  try {
-    const url = new URL(value);
-    if (!/(^|\.)twimg\.com$/.test(url.hostname)) return null;
-    const match = url.pathname.match(/\/(ext_tw_video|amplify_video)(?:_thumb)?\/(\d+)(?:\/|$)/);
-    return match ? `${match[1]}:${match[2]}` : null;
-  } catch { return null; }
-}
+// Site identity, audio detection and URL classification live in media-taxonomy.js.
+import './media-taxonomy.js';
+const { assetKey, isAudioItem } = globalThis.VDR_TAXONOMY;
 
 export function matchMedia(item, players) {
   const exact = players.find(player => player.urls.includes(item.url));
@@ -41,15 +32,38 @@ export function groupResources(items) {
 // Variant playlists are reached through their parent, so only roots are offered; direct files first.
 export function rootItems(group) {
   const children = new Set(group.items.flatMap(item => (item.variants || []).map(variant => variant.url)));
-  const items = [...group.items].sort((a, b) => Number(a.kind !== 'file') - Number(b.kind !== 'file'));
-  const roots = items.filter(item => !children.has(item.url));
+  // Complete video files first; a track or sibling file must not become the
+  // default choice for a video. Rank: file > hls/dash > audio > image.
+  const rank = kind => ({ file: 0, hls: 1, dash: 1, audio: 2, image: 3 })[kind] ?? 4;
+  // Bound items follow the page's own order (quality lists, image index);
+  // network arrival order is not meaningful.
+  const pageOrder = item => {
+    const index = group.media?.urls?.indexOf(item.url) ?? -1;
+    return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+  };
+  const items = [...group.items].sort((a, b) =>
+    rank(a.kind) - rank(b.kind) ||
+    pageOrder(a) - pageOrder(b) ||
+    Number(isAudioItem(a)) - Number(isAudioItem(b)) ||
+    Number(/\.m4s(\?|#|$)/.test(a.url)) - Number(/\.m4s(\?|#|$)/.test(b.url)));
+  // Two options with the same label cannot be told apart; keep the first
+  // (best-sorted) variant and let different labels stay selectable.
+  const seen = new Set();
+  const roots = items.filter(item => {
+    if (children.has(item.url)) return false;
+    const key = `${item.kind}:${item.name}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   // A malformed cyclic playlist must still offer one item.
   return roots.length ? roots : items.slice(0, 1);
 }
 
 // The card title and the saved filename both come from this name.
 export function groupName(group) {
-  return group.items.find(item => item.displayName)?.displayName || group.media?.title || group.items[0].name;
+  return group.items.find(item => item.displayName)?.displayName || group.media?.title ||
+    (group.items.find(item => !isAudioItem(item)) || group.items[0]).name;
 }
 
 export function ownsJob(group, job) {
